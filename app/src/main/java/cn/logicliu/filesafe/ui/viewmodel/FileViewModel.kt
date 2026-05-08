@@ -1,0 +1,347 @@
+package cn.logicliu.filesafe.ui.viewmodel
+
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import cn.logicliu.filesafe.data.entity.FileItemEntity
+import cn.logicliu.filesafe.data.entity.FolderEntity
+import cn.logicliu.filesafe.data.entity.TrashItemEntity
+import cn.logicliu.filesafe.data.repository.FileRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+enum class FileCategory {
+    ALL, IMAGE, VIDEO, DOCUMENT, OTHER
+}
+
+enum class ViewMode {
+    GRID, LIST
+}
+
+class FileViewModel(
+    private val fileRepository: FileRepository
+) : ViewModel() {
+
+    private val _currentFolderId = MutableStateFlow<Long?>(null)
+    val currentFolderId: StateFlow<Long?> = _currentFolderId.asStateFlow()
+
+    private val _currentFolderName = MutableStateFlow("根目录")
+    val currentFolderName: StateFlow<String> = _currentFolderName.asStateFlow()
+
+    val currentFiles: MutableStateFlow<List<FileItemEntity>> = MutableStateFlow(emptyList())
+
+    val currentFolders: MutableStateFlow<List<FolderEntity>> = MutableStateFlow(emptyList())
+
+    val trashItems: StateFlow<List<TrashItemEntity>> = fileRepository.getAllTrashItems()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _selectedCategory = MutableStateFlow(FileCategory.ALL)
+    val selectedCategory: StateFlow<FileCategory> = _selectedCategory.asStateFlow()
+
+    private val _viewMode = MutableStateFlow(ViewMode.LIST)
+    val viewMode: StateFlow<ViewMode> = _viewMode.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _operationSuccess = MutableStateFlow<String?>(null)
+    val operationSuccess: StateFlow<String?> = _operationSuccess.asStateFlow()
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchResults = MutableStateFlow<List<Any>>(emptyList())
+    val searchResults: StateFlow<List<Any>> = _searchResults.asStateFlow()
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    val combinedContents: StateFlow<List<Any>> = fileRepository.getCombinedContents(null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun navigateToFolder(folderId: Long, folderName: String) {
+        _currentFolderId.value = folderId
+        _currentFolderName.value = folderName
+        viewModelScope.launch {
+            fileRepository.getFilesByFolder(folderId).collect { files ->
+                currentFiles.value = files
+            }
+        }
+        viewModelScope.launch {
+            fileRepository.getFoldersByParent(folderId).collect { folders ->
+                currentFolders.value = folders
+            }
+        }
+    }
+
+    fun navigateBack(): Boolean {
+        return if (_currentFolderId.value != null) {
+            _currentFolderId.value = null
+            _currentFolderName.value = "根目录"
+            true
+        } else {
+            false
+        }
+    }
+
+    fun navigateToRoot() {
+        _currentFolderId.value = null
+        _currentFolderName.value = "根目录"
+    }
+
+    fun setCategory(category: FileCategory) {
+        _selectedCategory.value = category
+    }
+
+    fun setViewMode(mode: ViewMode) {
+        _viewMode.value = mode
+    }
+
+    fun importFile(uri: Uri) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.importFile(uri, _currentFolderId.value)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件导入成功"
+                },
+                onFailure = { e ->
+                    _error.value = "导入文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun createFolder(name: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.createFolder(name, _currentFolderId.value)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件夹创建成功"
+                },
+                onFailure = { e ->
+                    _error.value = "创建文件夹失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun deleteFile(fileId: Long, moveToTrash: Boolean = true) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.deleteFile(fileId, moveToTrash)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = if (moveToTrash) "文件已移到回收站" else "文件已删除"
+                },
+                onFailure = { e ->
+                    _error.value = "删除文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun deleteFolder(folderId: Long, moveToTrash: Boolean = true) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.deleteFolder(folderId, moveToTrash)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = if (moveToTrash) "文件夹已移到回收站" else "文件夹已删除"
+                },
+                onFailure = { e ->
+                    _error.value = "删除文件夹失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun renameFile(fileId: Long, newName: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.renameFile(fileId, newName)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件重命名成功"
+                },
+                onFailure = { e ->
+                    _error.value = "重命名文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun renameFolder(folderId: Long, newName: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.renameFolder(folderId, newName)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件夹重命名成功"
+                },
+                onFailure = { e ->
+                    _error.value = "重命名文件夹失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun moveFile(fileId: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.moveFile(fileId, targetFolderId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件移动成功"
+                },
+                onFailure = { e ->
+                    _error.value = "移动文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun restoreFromTrash(trashItemId: Long) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.restoreFromTrash(trashItemId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件已恢复"
+                },
+                onFailure = { e ->
+                    _error.value = "恢复文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun permanentlyDeleteTrashItem(trashItemId: Long) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.permanentlyDeleteTrashItem(trashItemId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件已永久删除"
+                },
+                onFailure = { e ->
+                    _error.value = "删除文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun emptyTrash() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.emptyTrash()
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "回收站已清空"
+                },
+                onFailure = { e ->
+                    _error.value = "清空回收站失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun search(query: String) {
+        _searchQuery.value = query
+        if (query.isBlank()) {
+            _isSearching.value = false
+            _searchResults.value = emptyList()
+            return
+        }
+
+        viewModelScope.launch {
+            _isSearching.value = true
+            fileRepository.searchFiles(query).collect { files ->
+                fileRepository.searchFolders(query).collect { folders ->
+                    _searchResults.value = (folders + files).sortedBy {
+                        when (it) {
+                            is FolderEntity -> "0_${it.name.lowercase()}"
+                            else -> "1_${(it as FileItemEntity).name.lowercase()}"
+                        }
+                    }
+                }
+            }
+            _isSearching.value = false
+        }
+    }
+
+    fun clearError() {
+        _error.value = null
+    }
+
+    fun clearSuccess() {
+        _operationSuccess.value = null
+    }
+
+    fun filterByCategory(items: List<Any>, category: FileCategory): List<Any> {
+        if (category == FileCategory.ALL) return items
+
+        return items.filter { item ->
+            when (item) {
+                is FolderEntity -> true
+                is FileItemEntity -> {
+                    val extension = item.name.substringAfterLast('.', "").lowercase()
+                    when (category) {
+                        FileCategory.IMAGE -> extension in IMAGE_EXTENSIONS
+                        FileCategory.VIDEO -> extension in VIDEO_EXTENSIONS
+                        FileCategory.DOCUMENT -> extension in DOCUMENT_EXTENSIONS
+                        FileCategory.OTHER -> extension !in IMAGE_EXTENSIONS &&
+                                extension !in VIDEO_EXTENSIONS &&
+                                extension !in DOCUMENT_EXTENSIONS
+                        FileCategory.ALL -> true
+                    }
+                }
+                else -> false
+            }
+        }
+    }
+
+    companion object {
+        val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
+        val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "avi", "mov", "wmv", "flv")
+        val DOCUMENT_EXTENSIONS = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt")
+    }
+}

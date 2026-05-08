@@ -5,43 +5,64 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.fragment.app.FragmentActivity
+import cn.logicliu.filesafe.ui.navigation.AppNavigation
+import cn.logicliu.filesafe.ui.screens.auth.LoginScreen
+import cn.logicliu.filesafe.ui.screens.auth.SetupPasswordScreen
 import cn.logicliu.filesafe.ui.theme.FileSafeTheme
+import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+    private lateinit var authViewModel: AuthViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        authViewModel = AuthViewModel(
+            FileSafeApplication.instance.passwordManager,
+            FileSafeApplication.instance.securityQuestionManager,
+            FileSafeApplication.instance.securitySettingsManager
+        )
+
         setContent {
             FileSafeTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    val isPasswordSet by authViewModel.isPasswordSet.collectAsState()
+                    val isUnlocked by authViewModel.isUnlocked.collectAsState()
+
+                    when {
+                        !isPasswordSet -> {
+                            SetupPasswordScreen(
+                                onPasswordSet = {
+                                    authViewModel.setPasswordSet(true)
+                                }
+                            )
+                        }
+                        !isUnlocked -> {
+                            LoginScreen(
+                                onNavigateToForgotPassword = { },
+                                onLoginSuccess = {
+                                    authViewModel.unlock()
+                                }
+                            )
+                        }
+                        else -> {
+                            AppNavigation(
+                                authViewModel = authViewModel
+                            )
+                        }
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    FileSafeTheme {
-        Greeting("Android")
     }
 }
