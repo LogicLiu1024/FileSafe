@@ -86,7 +86,7 @@ fun AppNavigation(
 
         composable(Screen.SetupPassword.route) {
             SetupPasswordScreen(
-                onSetupComplete = {
+                onPasswordSet = {
                     navController.navigate(Screen.SetupSecurityQuestions.route) {
                         popUpTo(Screen.SetupPassword.route) { inclusive = true }
                     }
@@ -149,11 +149,8 @@ fun AppNavigation(
                 onNavigateBack = {
                     navController.popBackStack()
                 },
-                onNavigateToFolder = { subFolderId, subFolderName ->
+                onNavigateToSubFolder = { subFolderId, subFolderName ->
                     navController.navigate(Screen.Folder.createRoute(subFolderId, subFolderName))
-                },
-                onNavigateToSettings = {
-                    navController.navigate(Screen.Settings.route)
                 }
             )
         }
@@ -162,9 +159,6 @@ fun AppNavigation(
             TrashScreen(
                 onNavigateBack = {
                     navController.popBackStack()
-                },
-                onNavigateToSettings = {
-                    navController.navigate(Screen.Settings.route)
                 }
             )
         }

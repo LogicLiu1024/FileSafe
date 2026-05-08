@@ -267,7 +267,7 @@ fun VideoPlayerScreen(
                     ) {
                         IconButton(
                             onClick = {
-                                val newPosition = (currentPosition - 10000).coerceAtLeast(0)
+                                val newPosition = (currentPosition - 10000f).coerceAtLeast(0f)
                                 exoPlayer.seekTo(newPosition.toLong())
                             },
                             modifier = Modifier

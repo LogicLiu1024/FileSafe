@@ -1,21 +1,22 @@
 [versions]
 agp = "9.2.1"
-coreKtx = "1.10.1"
+coreKtx = "1.13.1"
 junit = "4.13.2"
-junitVersion = "1.1.5"
-espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.1"
-activityCompose = "1.8.0"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
+lifecycleRuntimeKtx = "2.8.7"
+activityCompose = "1.9.3"
 kotlin = "2.2.10"
-composeBom = "2026.02.01"
-navigationCompose = "2.7.7"
-biometric = "1.1.0"
-media3 = "1.2.1"
-coroutines = "1.7.3"
-datastore = "1.0.0"
-coil = "2.5.0"
-gson = "2.10.1"
-room = "2.6.1"
+composeBom = "2024.12.01"
+navigationCompose = "2.8.5"
+biometric = "1.2.0-alpha05"
+media3 = "1.5.1"
+coroutines = "1.9.0"
+datastore = "1.1.1"
+coil = "2.7.0"
+gson = "2.11.0"
+room = "2.7.0"
+ksp = "2.2.10-2.0.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,3 +50,4 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

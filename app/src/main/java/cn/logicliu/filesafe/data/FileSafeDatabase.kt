@@ -25,5 +25,20 @@ abstract class FileSafeDatabase : RoomDatabase() {
 
     companion object {
         const val DATABASE_NAME = "filesafe_database"
+
+        @Volatile
+        private var INSTANCE: FileSafeDatabase? = null
+
+        fun getInstance(context: android.content.Context): FileSafeDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = androidx.room.Room.databaseBuilder(
+                    context.applicationContext,
+                    FileSafeDatabase::class.java,
+                    DATABASE_NAME
+                ).build()
+                INSTANCE = instance
+                instance
+            }
+        }
     }
 }
