@@ -14,5 +14,6 @@ data class TrashItemEntity(
     val mimeType: String?,
     val deletedAt: Long,
     val itemType: String,
-    val originalFolderId: Long?
+    val originalFolderId: Long?,
+    val isEncrypted: Boolean = true
 )

@@ -2,6 +2,8 @@ package cn.logicliu.filesafe.data
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.logicliu.filesafe.data.dao.FileItemDao
 import cn.logicliu.filesafe.data.dao.FolderDao
 import cn.logicliu.filesafe.data.dao.TrashItemDao
@@ -15,7 +17,7 @@ import cn.logicliu.filesafe.data.entity.TrashItemEntity
         FolderEntity::class,
         TrashItemEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class FileSafeDatabase : RoomDatabase() {
@@ -26,6 +28,12 @@ abstract class FileSafeDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "filesafe_database"
 
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE trash_items ADD COLUMN isEncrypted INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         @Volatile
         private var INSTANCE: FileSafeDatabase? = null
 
@@ -35,7 +43,9 @@ abstract class FileSafeDatabase : RoomDatabase() {
                     context.applicationContext,
                     FileSafeDatabase::class.java,
                     DATABASE_NAME
-                ).build()
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
                 INSTANCE = instance
                 instance
             }

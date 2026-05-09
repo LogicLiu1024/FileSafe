@@ -358,7 +358,8 @@ class FileRepository(
                         mimeType = fileEntity.mimeType,
                         deletedAt = System.currentTimeMillis(),
                         itemType = "file",
-                        originalFolderId = fileEntity.folderId
+                        originalFolderId = fileEntity.folderId,
+                        isEncrypted = fileEntity.isEncrypted
                     )
                     fileDataStore.insertTrashItem(trashItem)
                 } else {
@@ -388,7 +389,8 @@ class FileRepository(
                         mimeType = null,
                         deletedAt = System.currentTimeMillis(),
                         itemType = "folder",
-                        originalFolderId = folderEntity.parentId
+                        originalFolderId = folderEntity.parentId,
+                        isEncrypted = folderEntity.isEncrypted
                     )
                     fileDataStore.insertTrashItem(trashItem)
                 } else {
@@ -475,7 +477,7 @@ class FileRepository(
                         folderId = trashItem.originalFolderId,
                         createdAt = trashItem.deletedAt,
                         modifiedAt = System.currentTimeMillis(),
-                        isEncrypted = true
+                        isEncrypted = trashItem.isEncrypted
                     )
                     val newFileId = fileDataStore.insertFile(fileEntity)
 
@@ -498,7 +500,7 @@ class FileRepository(
                         parentId = trashItem.originalFolderId,
                         createdAt = trashItem.deletedAt,
                         modifiedAt = System.currentTimeMillis(),
-                        isEncrypted = true
+                        isEncrypted = trashItem.isEncrypted
                     )
                     fileDataStore.insertFolder(folderEntity)
                 }
