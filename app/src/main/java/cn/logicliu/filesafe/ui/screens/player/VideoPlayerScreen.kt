@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -143,11 +144,14 @@ fun VideoPlayerScreen(
             }
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
+                    if (zoom.isNaN() || zoom.isInfinite() || zoom <= 0f) return@detectTransformGestures
+                    
                     scale = (scale * zoom).coerceIn(1f, 4f)
                     if (scale > 1f) {
+                        val maxOffset = 500f * (scale - 1)
                         offset = Offset(
-                            x = (offset.x + pan.x).coerceIn(-500f * (scale - 1), 500f * (scale - 1)),
-                            y = (offset.y + pan.y).coerceIn(-500f * (scale - 1), 500f * (scale - 1))
+                            x = (offset.x + pan.x).coerceIn(-maxOffset, maxOffset),
+                            y = (offset.y + pan.y).coerceIn(-maxOffset, maxOffset)
                         )
                     } else {
                         offset = Offset.Zero
@@ -168,15 +172,11 @@ fun VideoPlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .let { mod ->
-                    if (scale > 1f) {
-                        mod.padding(
-                            top = (offset.y / 2).dp,
-                            bottom = (-offset.y / 2).dp,
-                            start = (offset.x / 2).dp,
-                            end = (-offset.x / 2).dp
-                        )
-                    } else mod
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
                 },
             update = { playerView ->
                 playerView.player = exoPlayer
