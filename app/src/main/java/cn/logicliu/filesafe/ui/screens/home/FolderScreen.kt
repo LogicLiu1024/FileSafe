@@ -83,6 +83,7 @@ import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.MultiSelectBottomBar
 import cn.logicliu.filesafe.service.ExportTempFileHolder
 import cn.logicliu.filesafe.ui.screens.viewer.FileViewerScreen
+import cn.logicliu.filesafe.ui.screens.viewer.MediaViewerScreen
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
 import cn.logicliu.filesafe.ui.viewmodel.ViewMode
 import java.io.File
@@ -112,6 +113,7 @@ fun FolderScreen(
     val error by viewModel.error.collectAsState()
     val operationSuccess by viewModel.operationSuccess.collectAsState()
     val selectedFileForView by viewModel.selectedFileForView.collectAsState()
+    val mediaViewerInfo by viewModel.mediaViewerInfo.collectAsState()
     val fileOperationProgress by viewModel.fileOperationProgress.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
@@ -186,6 +188,16 @@ fun FolderScreen(
     }
 
     val allFolders = currentFolders
+
+    if (mediaViewerInfo != null) {
+        MediaViewerScreen(
+            mediaFileEntities = mediaViewerInfo!!.entities,
+            initialIndex = mediaViewerInfo!!.initialIndex,
+            onNavigateBack = { viewModel.clearMediaViewer() },
+            onDecryptFile = { fileId -> viewModel.getDecryptedFileForViewing(fileId) }
+        )
+        return
+    }
 
     if (selectedFileForView != null) {
         FileViewerScreen(

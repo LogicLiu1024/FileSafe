@@ -1,8 +1,7 @@
-package cn.logicliu.filesafe.ui.screens.player
+package cn.logicliu.filesafe.ui.screens.viewer
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -10,9 +9,9 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +23,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -37,6 +38,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -54,7 +56,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -63,43 +67,142 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.delay
+import android.net.Uri
+import cn.logicliu.filesafe.data.entity.FileItemEntity
+import cn.logicliu.filesafe.ui.screens.player.isVideoFile
+import coil.compose.rememberAsyncImagePainter
+import androidx.compose.ui.input.pointer.PointerInputScope
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 @OptIn(UnstableApi::class)
 @Composable
-fun VideoPlayerScreen(
-    videoUri: String,
-    videoName: String,
+fun MediaViewerScreen(
+    mediaFileEntities: List<FileItemEntity>,
+    initialIndex: Int,
     onNavigateBack: () -> Unit,
-    playWhenReady: Boolean = true
+    onDecryptFile: suspend (Long) -> Result<File>
+) {
+    val pagerState = rememberPagerState(initialPage = initialIndex) { mediaFileEntities.size }
+
+    var decryptedFiles by remember { mutableStateOf<Map<Long, File>>(emptyMap()) }
+
+    val currentEntity = remember(pagerState.currentPage, mediaFileEntities) {
+        mediaFileEntities.getOrNull(pagerState.currentPage)
+    }
+
+    BackHandler(onBack = onNavigateBack)
+
+    LaunchedEffect(pagerState.currentPage, pagerState.settledPage) {
+        val current = pagerState.settledPage
+        val pagesToLoad = ((current - 1).coerceAtLeast(0)..(current + 1).coerceAtMost(mediaFileEntities.size - 1))
+            .filter { it in mediaFileEntities.indices }
+
+        for (page in pagesToLoad) {
+            val entity = mediaFileEntities[page]
+            if (decryptedFiles.containsKey(entity.id)) continue
+
+            val result = onDecryptFile(entity.id)
+            result.onSuccess { file ->
+                decryptedFiles = decryptedFiles + (entity.id to file)
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            val entity = mediaFileEntities[page]
+            val decryptedFile = decryptedFiles[entity.id]
+
+            if (decryptedFile != null) {
+                if (isVideoFile(entity.name)) {
+                    VideoPage(
+                        videoFile = decryptedFile,
+                        videoName = entity.name
+                    )
+                } else {
+                    ImagePage(
+                        imageFile = decryptedFile,
+                        imageName = entity.name
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = Color.White)
+                }
+            }
+        }
+
+        currentEntity?.let { entity ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onNavigateBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回",
+                        tint = Color.White
+                    )
+                }
+                Text(
+                    text = entity.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun VideoPage(
+    videoFile: File,
+    videoName: String
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
-    var isPlaying by remember { mutableStateOf(true) }
+    val uri = Uri.fromFile(videoFile)
+    var isPlaying by remember { mutableStateOf(false) }
+    var showControls by remember { mutableStateOf(true) }
     var currentPosition by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
-    var isLandscape by remember { mutableStateOf(true) }
-    var showControls by remember { mutableStateOf(true) }
     var isSeeking by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var isLandscape by remember { mutableStateOf(false) }
 
-    BackHandler(onBack = onNavigateBack)
-
-    val exoPlayer = remember {
+    val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(Uri.parse(videoUri)))
+            setMediaItem(MediaItem.fromUri(uri))
             prepare()
-            this.playWhenReady = playWhenReady
+            playWhenReady = false
         }
     }
 
     LaunchedEffect(exoPlayer) {
         while (true) {
-            delay(500)
+            kotlinx.coroutines.delay(500)
             if (!isSeeking) {
                 currentPosition = exoPlayer.currentPosition.toFloat()
             }
@@ -112,10 +215,15 @@ fun VideoPlayerScreen(
         exoPlayer.setPlaybackSpeed(playbackSpeed)
     }
 
-    DisposableEffect(Unit) {
-        val originalOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    LaunchedEffect(showControls) {
+        if (showControls && isPlaying) {
+            kotlinx.coroutines.delay(3000)
+            showControls = false
+        }
+    }
 
+    DisposableEffect(uri) {
+        val originalOrientation = activity?.requestedOrientation
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
@@ -127,15 +235,10 @@ fun VideoPlayerScreen(
         onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.release()
-            activity?.requestedOrientation = originalOrientation
-                ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
-
-    LaunchedEffect(showControls) {
-        if (showControls) {
-            delay(3000)
-            showControls = false
+            if (isLandscape) {
+                activity?.requestedOrientation = originalOrientation
+                    ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
         }
     }
 
@@ -159,20 +262,11 @@ fun VideoPlayerScreen(
                 )
             }
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    if (zoom.isNaN() || zoom.isInfinite() || zoom <= 0f) return@detectTransformGestures
-                    
-                    scale = (scale * zoom).coerceIn(1f, 4f)
-                    if (scale > 1f) {
-                        val maxOffset = 500f * (scale - 1)
-                        offset = Offset(
-                            x = (offset.x + pan.x).coerceIn(-maxOffset, maxOffset),
-                            y = (offset.y + pan.y).coerceIn(-maxOffset, maxOffset)
-                        )
-                    } else {
-                        offset = Offset.Zero
-                    }
-                }
+                detectZoomAndPan(
+                    onScaleChange = { newScale -> scale = newScale },
+                    onOffsetChange = { newOffset -> offset = newOffset },
+                    currentScale = { scale }
+                )
             }
     ) {
         AndroidView(
@@ -188,19 +282,38 @@ fun VideoPlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offset.x,
                     translationY = offset.y
-                },
+                ),
             update = { playerView ->
                 playerView.player = exoPlayer
             }
         )
 
+        if (!isPlaying) {
+            IconButton(
+                onClick = {
+                    exoPlayer.play()
+                },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(72.dp)
+                    .background(Color.White.copy(alpha = 0.4f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "播放",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
+            }
+        }
+
         AnimatedVisibility(
-            visible = showControls,
+            visible = showControls && isPlaying,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -215,28 +328,10 @@ fun VideoPlayerScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .statusBarsPadding()
                             .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "返回",
-                                tint = Color.White
-                            )
-                        }
-
-                        Text(
-                            text = videoName,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp)
-                        )
-
                         Box {
                             IconButton(onClick = { showSpeedMenu = true }) {
                                 Icon(
@@ -377,12 +472,12 @@ fun VideoPlayerScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = formatTime(currentPosition.toLong()),
+                                text = formatVideoTime(currentPosition.toLong()),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White
                             )
                             Text(
-                                text = formatTime(duration.toLong()),
+                                text = formatVideoTime(duration.toLong()),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White
                             )
@@ -396,7 +491,150 @@ fun VideoPlayerScreen(
     }
 }
 
-private fun formatTime(millis: Long): String {
+@Composable
+private fun ImagePage(imageFile: File, imageName: String) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Image(
+            painter = rememberAsyncImagePainter(Uri.fromFile(imageFile)),
+            contentDescription = imageName,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offset.x,
+                    translationY = offset.y
+                )
+                .pointerInput(Unit) {
+                    detectZoomAndPan(
+                        onScaleChange = { newScale -> scale = newScale },
+                        onOffsetChange = { newOffset -> offset = newOffset },
+                        currentScale = { scale }
+                    )
+                },
+            contentScale = ContentScale.Fit,
+            alignment = Alignment.Center
+        )
+    }
+}
+
+private suspend fun PointerInputScope.detectZoomAndPan(
+    onScaleChange: (Float) -> Unit,
+    onOffsetChange: (Offset) -> Unit,
+    currentScale: () -> Float
+) {
+    awaitPointerEventScope {
+        while (true) {
+            var downEvent = awaitPointerEvent()
+            while (downEvent.type != PointerEventType.Press) {
+                downEvent = awaitPointerEvent()
+            }
+            val initialChanges = downEvent.changes
+            val initialCentroid = if (initialChanges.size >= 2) {
+                initialChanges.map { it.position }.reduce { acc, pos -> acc + pos } / initialChanges.size.toFloat()
+            } else {
+                initialChanges.first().position
+            }
+            val initialSpan = if (initialChanges.size >= 2) {
+                initialChanges.map { (it.position - initialCentroid).getDistance() }.sum() / initialChanges.size
+            } else {
+                0f
+            }
+            val initialScale = currentScale()
+
+            var previousCentroid = initialCentroid
+            var previousSpan = initialSpan
+            var currentZoomedScale = initialScale
+            var totalOffset = Offset.Zero
+            var isMultiTouch = initialChanges.size >= 2
+
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.type != PointerEventType.Move) continue
+                val changes = event.changes
+                val allUp = changes.all { !it.pressed }
+
+                if (allUp) break
+
+                val currentCentroid = if (changes.size >= 2) {
+                    changes.map { it.position }.reduce { acc, pos -> acc + pos } / changes.size.toFloat()
+                } else {
+                    changes.first().position
+                }
+
+                if (changes.size >= 2) {
+                    if (!isMultiTouch) {
+                        isMultiTouch = true
+                        previousSpan = 0f
+                        previousCentroid = currentCentroid
+                        totalOffset = Offset.Zero
+                    }
+
+                    val currentSpan = changes.map { (it.position - currentCentroid).getDistance() }.sum() / changes.size
+
+                    val zoomFactor = if (previousSpan > 0f && initialSpan > 0f) {
+                        currentSpan / initialSpan
+                    } else {
+                        1f
+                    }
+
+                    currentZoomedScale = (initialScale * zoomFactor).coerceIn(1f, 4f)
+                    onScaleChange(currentZoomedScale)
+
+                    if (currentZoomedScale > 1f) {
+                        val pan = Offset(
+                            currentCentroid.x - previousCentroid.x,
+                            currentCentroid.y - previousCentroid.y
+                        )
+                        if (previousSpan > 0f) {
+                            totalOffset = Offset(
+                                totalOffset.x + pan.x,
+                                totalOffset.y + pan.y
+                            )
+                            val clampedOffset = Offset(
+                                totalOffset.x.coerceIn(-500f * (currentZoomedScale - 1), 500f * (currentZoomedScale - 1)),
+                                totalOffset.y.coerceIn(-500f * (currentZoomedScale - 1), 500f * (currentZoomedScale - 1))
+                            )
+                            onOffsetChange(clampedOffset)
+                        }
+                    } else {
+                        totalOffset = Offset.Zero
+                        onOffsetChange(Offset.Zero)
+                    }
+
+                    previousCentroid = currentCentroid
+                    previousSpan = currentSpan
+
+                    changes.forEach { it.consume() }
+                } else if (currentScale() > 1f) {
+                    val pan = Offset(
+                        currentCentroid.x - previousCentroid.x,
+                        currentCentroid.y - previousCentroid.y
+                    )
+                    totalOffset = Offset(
+                        totalOffset.x + pan.x,
+                        totalOffset.y + pan.y
+                    )
+                    val clampedOffset = Offset(
+                        totalOffset.x.coerceIn(-500f * (currentScale() - 1), 500f * (currentScale() - 1)),
+                        totalOffset.y.coerceIn(-500f * (currentScale() - 1), 500f * (currentScale() - 1))
+                    )
+                    onOffsetChange(clampedOffset)
+
+                    previousCentroid = currentCentroid
+                    changes.forEach { it.consume() }
+                }
+            }
+        }
+    }
+}
+
+private fun formatVideoTime(millis: Long): String {
     if (millis < 0) return "00:00"
     val hours = TimeUnit.MILLISECONDS.toHours(millis)
     val minutes = TimeUnit.MILLISECONDS.toMinutes(millis) % 60
@@ -407,9 +645,4 @@ private fun formatTime(millis: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
-}
-
-fun isVideoFile(fileName: String): Boolean {
-    val extension = fileName.substringAfterLast('.', "").lowercase()
-    return extension in listOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "3gp")
 }

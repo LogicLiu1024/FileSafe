@@ -329,7 +329,27 @@ class FileViewModel(
     private val _selectedFileForView = MutableStateFlow<File?>(null)
     val selectedFileForView: StateFlow<File?> = _selectedFileForView.asStateFlow()
 
+    data class MediaViewerInfo(
+        val entities: List<FileItemEntity>,
+        val initialIndex: Int
+    )
+
+    private val _mediaViewerInfo = MutableStateFlow<MediaViewerInfo?>(null)
+    val mediaViewerInfo: StateFlow<MediaViewerInfo?> = _mediaViewerInfo.asStateFlow()
+
     fun viewFile(fileId: Long) {
+        val files = currentFiles.value
+        val mediaFiles = files.filter {
+            val ext = it.name.substringAfterLast('.', "").lowercase()
+            ext in IMAGE_EXTENSIONS || ext in VIDEO_EXTENSIONS
+        }
+        if (mediaFiles.size > 1) {
+            val index = mediaFiles.indexOfFirst { it.id == fileId }
+            if (index >= 0) {
+                _mediaViewerInfo.value = MediaViewerInfo(mediaFiles, index)
+            }
+        }
+
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
@@ -347,8 +367,21 @@ class FileViewModel(
         }
     }
 
+    suspend fun getDecryptedFileForViewing(fileId: Long): Result<File> {
+        return fileRepository.getDecryptedFile(fileId)
+    }
+
+    fun clearMediaViewer() {
+        _mediaViewerInfo.value = null
+        _selectedFileForView.value = null
+    }
+
     fun clearSelectedFileForView() {
         _selectedFileForView.value = null
+    }
+
+    fun updateCurrentFiles(files: List<FileItemEntity>) {
+        currentFiles.value = files
     }
 
     fun exportFile(fileId: Long) {

@@ -102,6 +102,7 @@ import cn.logicliu.filesafe.ui.components.FileListItem
 import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.MultiSelectBottomBar
 import cn.logicliu.filesafe.ui.screens.viewer.FileViewerScreen
+import cn.logicliu.filesafe.ui.screens.viewer.MediaViewerScreen
 import cn.logicliu.filesafe.ui.viewmodel.FileCategory
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
 import cn.logicliu.filesafe.ui.viewmodel.ViewMode
@@ -135,6 +136,7 @@ fun HomeScreen(
     val error by viewModel.error.collectAsState()
     val operationSuccess by viewModel.operationSuccess.collectAsState()
     val selectedFileForView by viewModel.selectedFileForView.collectAsState()
+    val mediaViewerInfo by viewModel.mediaViewerInfo.collectAsState()
     val fileOperationProgress by viewModel.fileOperationProgress.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
@@ -210,6 +212,20 @@ fun HomeScreen(
 
     val folders = filteredContents.filterIsInstance<FolderEntity>()
     val files = filteredContents.filterIsInstance<FileItemEntity>()
+
+    LaunchedEffect(combinedContents) {
+        viewModel.updateCurrentFiles(combinedContents.filterIsInstance<FileItemEntity>())
+    }
+
+    if (mediaViewerInfo != null) {
+        MediaViewerScreen(
+            mediaFileEntities = mediaViewerInfo!!.entities,
+            initialIndex = mediaViewerInfo!!.initialIndex,
+            onNavigateBack = { viewModel.clearMediaViewer() },
+            onDecryptFile = { fileId -> viewModel.getDecryptedFileForViewing(fileId) }
+        )
+        return
+    }
 
     if (selectedFileForView != null) {
         FileViewerScreen(
