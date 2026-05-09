@@ -2,6 +2,7 @@ package cn.logicliu.filesafe.ui.screens.settings
 
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,8 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,14 +21,18 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -33,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import cn.logicliu.filesafe.security.BiometricHelper
@@ -48,6 +60,7 @@ import cn.logicliu.filesafe.security.SecuritySettingsManager
 import cn.logicliu.filesafe.security.PasswordManager
 import cn.logicliu.filesafe.security.SecurityQuestionManager
 import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
+import cn.logicliu.filesafe.ui.viewmodel.ChangePasswordState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +81,16 @@ fun SecuritySettingsScreen(
     val screenOffLockEnabled by viewModel.screenOffLockEnabled.collectAsState()
 
     var showAutoLockDialog by remember { mutableStateOf(false) }
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
+
+    val changePasswordState by viewModel.changePasswordState.collectAsState()
+
+    LaunchedEffect(changePasswordState) {
+        if (changePasswordState is ChangePasswordState.Success) {
+            showChangePasswordDialog = false
+            viewModel.resetChangePasswordState()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -343,7 +366,10 @@ fun SecuritySettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { }
+                            .clickable {
+                                showChangePasswordDialog = true
+                                viewModel.resetChangePasswordState()
+                            }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -381,6 +407,19 @@ fun SecuritySettingsScreen(
             onTimeSelected = { time ->
                 viewModel.setAutoLockTime(time)
                 showAutoLockDialog = false
+            }
+        )
+    }
+
+    if (showChangePasswordDialog) {
+        ChangePasswordDialog(
+            state = changePasswordState,
+            onDismiss = {
+                showChangePasswordDialog = false
+                viewModel.resetChangePasswordState()
+            },
+            onConfirm = { oldPassword, newPassword ->
+                viewModel.changePassword(oldPassword, newPassword)
             }
         )
     }
@@ -426,4 +465,149 @@ private fun AutoLockTimeDialog(
 private fun getAutoLockText(timeMillis: Long): String {
     return SecuritySettingsManager.AUTO_LOCK_OPTIONS.find { it.first == timeMillis }?.second
         ?: "5分钟"
+}
+
+@Composable
+private fun ChangePasswordDialog(
+    state: ChangePasswordState,
+    onDismiss: () -> Unit,
+    onConfirm: (oldPassword: String, newPassword: String) -> Unit
+) {
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmNewPassword by remember { mutableStateOf("") }
+    var currentPasswordVisible by remember { mutableStateOf(false) }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var confirmNewPasswordVisible by remember { mutableStateOf(false) }
+
+    val newPasswordError = when {
+        newPassword.isNotEmpty() && newPassword.length < 6 -> "密码长度至少6位"
+        confirmNewPassword.isNotEmpty() && newPassword != confirmNewPassword -> "两次密码不一致"
+        else -> null
+    }
+
+    val isLoading = state is ChangePasswordState.Loading
+
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        title = { Text("修改密码") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = currentPassword,
+                    onValueChange = { currentPassword = it },
+                    label = { Text("当前密码") },
+                    singleLine = true,
+                    visualTransformation = if (currentPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { currentPasswordVisible = !currentPasswordVisible }) {
+                            Icon(
+                                imageVector = if (currentPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (currentPasswordVisible) "隐藏密码" else "显示密码"
+                            )
+                        }
+                    },
+                    isError = state is ChangePasswordState.Error && currentPassword.isNotEmpty(),
+                    supportingText = {
+                        if (state is ChangePasswordState.Error && currentPassword.isNotEmpty()) {
+                            Text(state.message)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("新密码") },
+                    singleLine = true,
+                    visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                            Icon(
+                                imageVector = if (newPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (newPasswordVisible) "隐藏密码" else "显示密码"
+                            )
+                        }
+                    },
+                    isError = newPasswordError != null && newPassword.isNotEmpty(),
+                    supportingText = {
+                        if (newPasswordError != null && newPassword.isNotEmpty()) {
+                            Text(newPasswordError)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+
+                OutlinedTextField(
+                    value = confirmNewPassword,
+                    onValueChange = { confirmNewPassword = it },
+                    label = { Text("确认新密码") },
+                    singleLine = true,
+                    visualTransformation = if (confirmNewPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { confirmNewPasswordVisible = !confirmNewPasswordVisible }) {
+                            Icon(
+                                imageVector = if (confirmNewPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (confirmNewPasswordVisible) "隐藏密码" else "显示密码"
+                            )
+                        }
+                    },
+                    isError = newPasswordError != null && confirmNewPassword.isNotEmpty(),
+                    supportingText = {
+                        if (newPasswordError != null && confirmNewPassword.isNotEmpty()) {
+                            Text(newPasswordError)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(currentPassword, newPassword) },
+                enabled = !isLoading &&
+                        currentPassword.isNotBlank() &&
+                        newPassword.isNotBlank() &&
+                        confirmNewPassword.isNotBlank() &&
+                        newPassword.length >= 6 &&
+                        newPassword == confirmNewPassword
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("确认")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isLoading
+            ) {
+                Text("取消")
+            }
+        }
+    )
 }

@@ -60,6 +60,9 @@ class AuthViewModel(
     private val _forgotPasswordState = MutableStateFlow<ForgotPasswordState>(ForgotPasswordState.EnteringQuestion)
     val forgotPasswordState: StateFlow<ForgotPasswordState> = _forgotPasswordState.asStateFlow()
 
+    private val _changePasswordState = MutableStateFlow<ChangePasswordState>(ChangePasswordState.Idle)
+    val changePasswordState: StateFlow<ChangePasswordState> = _changePasswordState.asStateFlow()
+
     private val _securityQuestions = MutableStateFlow<List<SecurityQuestion>>(emptyList())
     val securityQuestions: StateFlow<List<SecurityQuestion>> = _securityQuestions.asStateFlow()
 
@@ -224,6 +227,26 @@ class AuthViewModel(
         }
     }
 
+    fun changePassword(oldPassword: String, newPassword: String) {
+        viewModelScope.launch {
+            _changePasswordState.value = ChangePasswordState.Loading
+            try {
+                val success = passwordManager.changePassword(oldPassword, newPassword)
+                if (success) {
+                    _changePasswordState.value = ChangePasswordState.Success
+                } else {
+                    _changePasswordState.value = ChangePasswordState.Error("当前密码错误")
+                }
+            } catch (e: Exception) {
+                _changePasswordState.value = ChangePasswordState.Error("修改密码失败: ${e.message}")
+            }
+        }
+    }
+
+    fun resetChangePasswordState() {
+        _changePasswordState.value = ChangePasswordState.Idle
+    }
+
     fun resetForgotPasswordState() {
         _forgotPasswordState.value = ForgotPasswordState.EnteringQuestion
     }
@@ -260,4 +283,11 @@ sealed class ForgotPasswordState {
     data object Verified : ForgotPasswordState()
     data object PasswordResetSuccess : ForgotPasswordState()
     data class Error(val message: String) : ForgotPasswordState()
+}
+
+sealed class ChangePasswordState {
+    data object Idle : ChangePasswordState()
+    data object Loading : ChangePasswordState()
+    data object Success : ChangePasswordState()
+    data class Error(val message: String) : ChangePasswordState()
 }
