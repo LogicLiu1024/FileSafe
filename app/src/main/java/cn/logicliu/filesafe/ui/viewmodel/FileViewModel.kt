@@ -84,15 +84,27 @@ class FileViewModel(
         
         when (progress.result) {
             OperationResult.SUCCESS -> {
-                _operationSuccess.value = when (progress.operation) {
-                    FileTaskOperation.IMPORT -> "文件导入成功"
-                    FileTaskOperation.EXPORT -> "文件导出成功"
+                _operationSuccess.value = if (progress.totalFiles > 1) {
+                    if (progress.errorMessage != null) {
+                        "批量导入完成: ${progress.errorMessage}"
+                    } else {
+                        "成功导入 ${progress.totalFiles} 个文件"
+                    }
+                } else {
+                    when (progress.operation) {
+                        FileTaskOperation.IMPORT -> "文件导入成功"
+                        FileTaskOperation.EXPORT -> "文件导出成功"
+                    }
                 }
             }
             OperationResult.ERROR -> {
-                _error.value = when (progress.operation) {
-                    FileTaskOperation.IMPORT -> "导入失败: ${progress.errorMessage}"
-                    FileTaskOperation.EXPORT -> "导出失败: ${progress.errorMessage}"
+                _error.value = if (progress.totalFiles > 1) {
+                    "批量导入失败: ${progress.errorMessage}"
+                } else {
+                    when (progress.operation) {
+                        FileTaskOperation.IMPORT -> "导入失败: ${progress.errorMessage}"
+                        FileTaskOperation.EXPORT -> "导出失败: ${progress.errorMessage}"
+                    }
                 }
             }
             OperationResult.CANCELLED -> {
@@ -157,11 +169,27 @@ class FileViewModel(
             operation = FileTaskOperation.IMPORT
         )
         
-        // Create temp file path
         val tempDir = File(context.cacheDir, "temp").apply { mkdirs() }
         val tempFilePath = File(tempDir, "temp_import_${UUID.randomUUID()}").absolutePath
         
         EncryptionService.startImport(context, uri, tempFilePath, _currentFolderId.value)
+    }
+
+    fun importFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (uris.size == 1) {
+            importFile(uris.first())
+            return
+        }
+        _error.value = null
+        _fileOperationProgress.value = FileOperationProgress(
+            isRunning = true,
+            progress = 0f,
+            operation = FileTaskOperation.IMPORT,
+            totalFiles = uris.size,
+            currentFileIndex = 0
+        )
+        EncryptionService.startBatchImport(context, uris, _currentFolderId.value)
     }
 
     fun createFolder(name: String) {

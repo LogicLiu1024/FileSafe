@@ -34,7 +34,9 @@ data class FileOperationProgress(
     val fileName: String = "",
     val operation: FileTaskOperation = FileTaskOperation.IMPORT,
     val result: OperationResult? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val totalFiles: Int = 1,
+    val currentFileIndex: Int = 0
 )
 
 enum class FileTaskOperation {
@@ -74,6 +76,7 @@ class EncryptionService : Service() {
         const val NOTIFICATION_ID = 1001
 
         const val ACTION_IMPORT = "cn.logicliu.filesafe.IMPORT"
+        const val ACTION_BATCH_IMPORT = "cn.logicliu.filesafe.BATCH_IMPORT"
         const val ACTION_EXPORT = "cn.logicliu.filesafe.EXPORT"
         const val ACTION_CANCEL = "cn.logicliu.filesafe.CANCEL"
 
@@ -91,6 +94,15 @@ class EncryptionService : Service() {
                 putExtra(EXTRA_SOURCE_URI, sourceUri)
                 putExtra(EXTRA_TEMP_FILE_PATH, tempFilePath)
                 folderId?.let { putExtra(EXTRA_FOLDER_ID, it) }
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun startBatchImport(context: Context, sourceUris: List<Uri>, folderId: Long? = null) {
+            BatchImportHolder.uris = sourceUris
+            BatchImportHolder.folderId = folderId
+            val intent = Intent(context, EncryptionService::class.java).apply {
+                action = ACTION_BATCH_IMPORT
             }
             context.startForegroundService(intent)
         }
@@ -127,6 +139,15 @@ class EncryptionService : Service() {
 
                 startForeground(NOTIFICATION_ID, createNotification("正在导入文件...", 0f))
                 startImport(sourceUri, tempFilePath, folderId)
+            }
+            ACTION_BATCH_IMPORT -> {
+                val sourceUris = BatchImportHolder.uris ?: return START_NOT_STICKY
+                val folderId = BatchImportHolder.folderId
+                BatchImportHolder.uris = null
+                BatchImportHolder.folderId = null
+
+                startForeground(NOTIFICATION_ID, createNotification("正在批量导入文件...", 0f))
+                startBatchImport(sourceUris, folderId)
             }
             ACTION_EXPORT -> {
                 val fileId = intent.getLongExtra(EXTRA_FILE_ID, -1)
@@ -358,6 +379,189 @@ class EncryptionService : Service() {
         }
     }
 
+    private fun startBatchImport(sourceUris: List<Uri>, folderId: Long?) {
+        currentJob = serviceScope.launch {
+            val totalFiles = sourceUris.size
+            var successCount = 0
+            var failCount = 0
+
+            ProgressManager.notifyProgress(
+                FileOperationProgress(
+                    isRunning = true,
+                    progress = 0f,
+                    operation = FileTaskOperation.IMPORT,
+                    totalFiles = totalFiles,
+                    currentFileIndex = 0
+                )
+            )
+            updateNotification("正在批量导入文件 (0/$totalFiles)...", 0f)
+
+            for ((index, sourceUri) in sourceUris.withIndex()) {
+                try {
+                    val fileName = getFileNameFromUri(sourceUri) ?: "file_${System.currentTimeMillis()}"
+
+                    ProgressManager.notifyProgress(
+                        FileOperationProgress(
+                            isRunning = true,
+                            progress = index.toFloat() / totalFiles,
+                            fileName = fileName,
+                            operation = FileTaskOperation.IMPORT,
+                            totalFiles = totalFiles,
+                            currentFileIndex = index
+                        )
+                    )
+                    updateNotification("正在导入 ($index/$totalFiles): $fileName", index.toFloat() / totalFiles)
+
+                    val encryptionMode = securitySettingsManager.encryptionMode.first()
+                    val encryptionAlgorithm = securitySettingsManager.encryptionAlgorithm.first()
+                    val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
+
+                    val tempDir = File(applicationContext.cacheDir, "temp").apply { mkdirs() }
+                    val tempFile = File(tempDir, "temp_import_${UUID.randomUUID()}")
+
+                    val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
+                        copyUriToFile(sourceUri, tempFile) { progress ->
+                            val fileProgress = progress * 0.7f
+                            val overallProgress = (index + fileProgress) / totalFiles
+                            ProgressManager.notifyProgress(
+                                FileOperationProgress(
+                                    isRunning = true,
+                                    progress = overallProgress,
+                                    fileName = fileName,
+                                    operation = FileTaskOperation.IMPORT,
+                                    totalFiles = totalFiles,
+                                    currentFileIndex = index
+                                )
+                            )
+                            updateNotification("正在导入 ($index/$totalFiles): $fileName", overallProgress)
+                        }
+
+                        ensureActive()
+
+                        val encryptedFileName = "${UUID.randomUUID()}.enc"
+                        val encryptedFile = File(encryptedDir, encryptedFileName)
+
+                        ensureActive()
+
+                        val algorithm = when (encryptionAlgorithm) {
+                            EncryptionAlgorithmType.AES_256_GCM -> cn.logicliu.filesafe.security.EncryptionAlgorithm.AES_256_GCM
+                            EncryptionAlgorithmType.XCHACHA20_POLY1305 -> cn.logicliu.filesafe.security.EncryptionAlgorithm.XCHACHA20_POLY1305
+                        }
+
+                        val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile, algorithm) { progress ->
+                            val fileProgress = 0.7f + progress * 0.3f
+                            val overallProgress = (index + fileProgress) / totalFiles
+                            ProgressManager.notifyProgress(
+                                FileOperationProgress(
+                                    isRunning = true,
+                                    progress = overallProgress,
+                                    fileName = fileName,
+                                    operation = FileTaskOperation.IMPORT,
+                                    totalFiles = totalFiles,
+                                    currentFileIndex = index
+                                )
+                            )
+                            updateNotification("正在加密 ($index/$totalFiles): $fileName", overallProgress)
+                        }
+
+                        tempFile.delete()
+
+                        if (!encryptSuccess) {
+                            throw Exception("加密失败")
+                        }
+
+                        ensureActive()
+
+                        Pair(encryptedFile, true)
+                    } else {
+                        val hiddenFileName = ".${UUID.randomUUID()}"
+                        val hiddenFile = File(encryptedDir, hiddenFileName)
+
+                        copyUriToFile(sourceUri, hiddenFile) { progress ->
+                            val overallProgress = (index + progress) / totalFiles
+                            ProgressManager.notifyProgress(
+                                FileOperationProgress(
+                                    isRunning = true,
+                                    progress = overallProgress,
+                                    fileName = fileName,
+                                    operation = FileTaskOperation.IMPORT,
+                                    totalFiles = totalFiles,
+                                    currentFileIndex = index
+                                )
+                            )
+                            updateNotification("正在导入 ($index/$totalFiles): $fileName", overallProgress)
+                        }
+
+                        ensureActive()
+
+                        Pair(hiddenFile, false)
+                    }
+
+                    val fileDataStore = cn.logicliu.filesafe.data.FileDataStore.getInstance(applicationContext)
+                    val fileEntity = cn.logicliu.filesafe.data.entity.FileItemEntity(
+                        name = fileName,
+                        path = fileName,
+                        encryptedPath = finalFile.absolutePath,
+                        size = finalFile.length(),
+                        mimeType = applicationContext.contentResolver.getType(sourceUri),
+                        folderId = folderId,
+                        createdAt = System.currentTimeMillis(),
+                        modifiedAt = System.currentTimeMillis(),
+                        isEncrypted = isEncrypted
+                    )
+                    val savedId = fileDataStore.insertFile(fileEntity)
+
+                    if (ThumbnailManager.isThumbnailSupported(fileName)) {
+                        if (isEncrypted) {
+                            ThumbnailManager.generateFromEncryptedFile(
+                                applicationContext, cryptoManager, finalFile, savedId, fileEntity.mimeType
+                            )
+                        } else {
+                            ThumbnailManager.generateFromPlainFile(
+                                applicationContext, finalFile, savedId, fileEntity.mimeType
+                            )
+                        }
+                    }
+
+                    successCount++
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    failCount++
+                }
+            }
+
+            if (successCount > 0) {
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        progress = 1f,
+                        operation = FileTaskOperation.IMPORT,
+                        result = OperationResult.SUCCESS,
+                        totalFiles = totalFiles,
+                        currentFileIndex = totalFiles,
+                        errorMessage = if (failCount > 0) "成功 $successCount 个，失败 $failCount 个" else null
+                    )
+                )
+                updateNotification("批量导入完成: 成功 $successCount 个", 1f)
+            } else {
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        operation = FileTaskOperation.IMPORT,
+                        result = OperationResult.ERROR,
+                        errorMessage = "全部导入失败",
+                        totalFiles = totalFiles,
+                        currentFileIndex = totalFiles
+                    )
+                )
+                updateNotification("批量导入失败", 0f)
+            }
+
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
     private fun startExport(fileId: Long) {
         currentJob = serviceScope.launch {
             try {
@@ -504,4 +708,9 @@ class EncryptionService : Service() {
 
 object ExportTempFileHolder {
     var tempFile: File? = null
+}
+
+object BatchImportHolder {
+    var uris: List<Uri>? = null
+    var folderId: Long? = null
 }

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -40,12 +41,14 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SnippetFolder
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.outlined.FolderOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -148,6 +151,11 @@ fun HomeScreen(
     var showBatchRenameDialog by remember { mutableStateOf(false) }
     var renameFileName by remember { mutableStateOf("") }
 
+    var showImportOptions by remember { mutableStateOf(false) }
+    var showFolderImportDialog by remember { mutableStateOf(false) }
+    var folderFiles by remember { mutableStateOf<List<FolderImportFile>>(emptyList()) }
+    var selectedFolderFileUris by remember { mutableStateOf(setOf<Uri>()) }
+
     fun exitSelectionMode() {
         isSelectionMode = false
         selectedFileIds = emptySet()
@@ -155,12 +163,35 @@ fun HomeScreen(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                viewModel.importFile(uri)
-            }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importFiles(uris)
+        }
+    }
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        treeUri?.let {
+            context.contentResolver.takePersistableUriPermission(
+                it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            val pickedDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, it)
+            val files = pickedDir?.listFiles()
+                ?.filter { doc -> doc.isFile }
+                ?.map { doc ->
+                    FolderImportFile(
+                        name = doc.name ?: "unknown",
+                        uri = doc.uri,
+                        size = doc.length()
+                    )
+                }
+                ?.sortedBy { it.name.lowercase() }
+                ?: emptyList()
+            folderFiles = files
+            selectedFolderFileUris = files.map { it.uri }.toSet()
+            showFolderImportDialog = true
         }
     }
 
@@ -343,13 +374,7 @@ fun HomeScreen(
             floatingActionButton = {
                 if (!isSelectionMode) {
                     FloatingActionButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                addCategory(Intent.CATEGORY_OPENABLE)
-                                type = "*/*"
-                            }
-                            filePickerLauncher.launch(intent)
-                        }
+                        onClick = { showImportOptions = true }
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "添加文件")
                     }
@@ -418,7 +443,9 @@ fun HomeScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = if (progress.operation == FileTaskOperation.IMPORT) "导入文件" else "导出文件",
+                                    text = if (progress.operation == FileTaskOperation.IMPORT) {
+                                        if (progress.totalFiles > 1) "批量导入 (${progress.currentFileIndex + 1}/${progress.totalFiles})" else "导入文件"
+                                    } else "导出文件",
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 if (progress.isRunning) {
@@ -728,6 +755,42 @@ fun HomeScreen(
             dismissButton = {
                 TextButton(onClick = { showBatchRenameDialog = false }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showImportOptions) {
+        ImportOptionsSheet(
+            onDismiss = { showImportOptions = false },
+            onSelectFiles = {
+                showImportOptions = false
+                filePickerLauncher.launch(arrayOf("*/*"))
+            },
+            onImportFromFolder = {
+                showImportOptions = false
+                folderPickerLauncher.launch(null)
+            }
+        )
+    }
+
+    if (showFolderImportDialog && folderFiles.isNotEmpty()) {
+        FolderImportDialog(
+            files = folderFiles,
+            selectedUris = selectedFolderFileUris,
+            onSelectionChange = { selectedFolderFileUris = it },
+            onDismiss = {
+                showFolderImportDialog = false
+                folderFiles = emptyList()
+                selectedFolderFileUris = emptySet()
+            },
+            onConfirm = {
+                val uris = selectedFolderFileUris.toList()
+                showFolderImportDialog = false
+                folderFiles = emptyList()
+                selectedFolderFileUris = emptySet()
+                if (uris.isNotEmpty()) {
+                    viewModel.importFiles(uris)
                 }
             }
         )

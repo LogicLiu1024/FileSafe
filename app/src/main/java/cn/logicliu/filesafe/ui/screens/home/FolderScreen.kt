@@ -30,14 +30,17 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SnippetFolder
 import androidx.compose.material.icons.outlined.FolderOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -70,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.logicliu.filesafe.data.FileDataStore
 import cn.logicliu.filesafe.data.entity.FileItemEntity
@@ -83,6 +87,7 @@ import cn.logicliu.filesafe.ui.components.FileListItem
 import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.MultiSelectBottomBar
 import cn.logicliu.filesafe.service.ExportTempFileHolder
+import cn.logicliu.filesafe.service.FileTaskOperation
 import cn.logicliu.filesafe.ui.screens.viewer.FileViewerScreen
 import cn.logicliu.filesafe.ui.screens.viewer.MediaViewerScreen
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
@@ -129,6 +134,11 @@ fun FolderScreen(
     var showBatchRenameDialog by remember { mutableStateOf(false) }
     var showDeleteCurrentFolderDialog by remember { mutableStateOf(false) }
 
+    var showImportOptions by remember { mutableStateOf(false) }
+    var showFolderImportDialog by remember { mutableStateOf(false) }
+    var folderFiles by remember { mutableStateOf<List<FolderImportFile>>(emptyList()) }
+    var selectedFolderFileUris by remember { mutableStateOf(setOf<Uri>()) }
+
     fun exitSelectionMode() {
         isSelectionMode = false
         selectedFileIds = emptySet()
@@ -136,12 +146,35 @@ fun FolderScreen(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                viewModel.importFile(uri)
-            }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importFiles(uris)
+        }
+    }
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        treeUri?.let {
+            context.contentResolver.takePersistableUriPermission(
+                it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            val pickedDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, it)
+            val files = pickedDir?.listFiles()
+                ?.filter { doc -> doc.isFile }
+                ?.map { doc ->
+                    FolderImportFile(
+                        name = doc.name ?: "unknown",
+                        uri = doc.uri,
+                        size = doc.length()
+                    )
+                }
+                ?.sortedBy { it.name.lowercase() }
+                ?: emptyList()
+            folderFiles = files
+            selectedFolderFileUris = files.map { it.uri }.toSet()
+            showFolderImportDialog = true
         }
     }
 
@@ -284,13 +317,7 @@ fun FolderScreen(
         floatingActionButton = {
             if (!isSelectionMode) {
                 FloatingActionButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                        }
-                        filePickerLauncher.launch(intent)
-                    }
+                    onClick = { showImportOptions = true }
                 ) {
                     Icon(Icons.Default.Add, contentDescription = "添加文件")
                 }
@@ -358,7 +385,9 @@ fun FolderScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (progress.operation == cn.logicliu.filesafe.service.FileTaskOperation.IMPORT) "导入文件" else "导出文件",
+                                text = if (progress.operation == FileTaskOperation.IMPORT) {
+                                    if (progress.totalFiles > 1) "批量导入 (${progress.currentFileIndex + 1}/${progress.totalFiles})" else "导入文件"
+                                } else "导出文件",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             if (progress.isRunning) {
@@ -374,7 +403,7 @@ fun FolderScreen(
                                 text = progress.fileName,
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -638,6 +667,42 @@ fun FolderScreen(
             dismissButton = {
                 TextButton(onClick = { showBatchRenameDialog = false }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showImportOptions) {
+        ImportOptionsSheet(
+            onDismiss = { showImportOptions = false },
+            onSelectFiles = {
+                showImportOptions = false
+                filePickerLauncher.launch(arrayOf("*/*"))
+            },
+            onImportFromFolder = {
+                showImportOptions = false
+                folderPickerLauncher.launch(null)
+            }
+        )
+    }
+
+    if (showFolderImportDialog && folderFiles.isNotEmpty()) {
+        FolderImportDialog(
+            files = folderFiles,
+            selectedUris = selectedFolderFileUris,
+            onSelectionChange = { selectedFolderFileUris = it },
+            onDismiss = {
+                showFolderImportDialog = false
+                folderFiles = emptyList()
+                selectedFolderFileUris = emptySet()
+            },
+            onConfirm = {
+                val uris = selectedFolderFileUris.toList()
+                showFolderImportDialog = false
+                folderFiles = emptyList()
+                selectedFolderFileUris = emptySet()
+                if (uris.isNotEmpty()) {
+                    viewModel.importFiles(uris)
                 }
             }
         )
