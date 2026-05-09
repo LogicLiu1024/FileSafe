@@ -399,7 +399,6 @@ fun FolderScreen(
         FileOperationMenu(
             onDismiss = { 
                 showFileOperationMenu = false
-                selectedItem = null
             },
             onView = {
                 viewModel.viewFile((selectedItem as FileItemEntity).id)
@@ -428,7 +427,6 @@ fun FolderScreen(
         FolderOperationMenu(
             onDismiss = { 
                 showFolderOperationMenu = false
-                selectedItem = null
             },
             onCopy = {
                 showOperationDialog = UiFileOperation.MOVE

@@ -532,7 +532,6 @@ fun HomeScreen(
         FileOperationMenu(
             onDismiss = { 
                 showFileOperationMenu = false
-                selectedItem = null
             },
             onView = {
                 viewModel.viewFile((selectedItem as FileItemEntity).id)
@@ -561,7 +560,6 @@ fun HomeScreen(
         FolderOperationMenu(
             onDismiss = { 
                 showFolderOperationMenu = false
-                selectedItem = null
             },
             onCopy = {
                 showOperationDialog = UiFileOperation.MOVE
