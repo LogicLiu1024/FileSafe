@@ -3,6 +3,7 @@ package cn.logicliu.filesafe.ui.screens.player
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -82,6 +83,8 @@ fun VideoPlayerScreen(
     var showSpeedMenu by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    BackHandler(onBack = onNavigateBack)
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {

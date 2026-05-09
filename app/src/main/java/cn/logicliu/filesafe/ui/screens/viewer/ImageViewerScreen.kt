@@ -1,6 +1,7 @@
 package cn.logicliu.filesafe.ui.screens.viewer
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,8 @@ fun ImageViewerScreen(
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    BackHandler(onBack = onNavigateBack)
 
     Scaffold(
         topBar = {

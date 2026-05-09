@@ -3,6 +3,7 @@ package cn.logicliu.filesafe.ui.screens.viewer
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,8 @@ fun FileViewerScreen(
 ) {
     val context = LocalContext.current
     val fileName = file.name
+
+    BackHandler(onBack = onNavigateBack)
 
     val isVideo = isVideoFile(fileName)
     val isImage = isImageFile(fileName)
