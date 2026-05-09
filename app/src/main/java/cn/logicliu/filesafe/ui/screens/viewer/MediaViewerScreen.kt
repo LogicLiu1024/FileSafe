@@ -3,7 +3,6 @@ package cn.logicliu.filesafe.ui.screens.viewer
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.net.Uri
-import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -19,11 +18,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -60,10 +59,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -76,7 +77,9 @@ import cn.logicliu.filesafe.ui.screens.player.isVideoFile
 import coil.compose.rememberAsyncImagePainter
 import java.io.File
 import java.util.concurrent.TimeUnit
-import androidx.compose.ui.input.pointer.PointerInputScope
+import android.view.View
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -88,9 +91,7 @@ fun MediaViewerScreen(
 ) {
     val pagerState = rememberPagerState(initialPage = initialIndex) { mediaFileEntities.size }
     var decryptedFiles by remember { mutableStateOf<Map<Long, File>>(emptyMap()) }
-    val currentEntity = remember(pagerState.currentPage, mediaFileEntities) {
-        mediaFileEntities.getOrNull(pagerState.currentPage)
-    }
+    var isAnyPageZoomed by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onNavigateBack)
 
@@ -117,7 +118,8 @@ fun MediaViewerScreen(
     ) {
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = !isAnyPageZoomed
         ) { page ->
             val entity = mediaFileEntities[page]
             val decryptedFile = decryptedFiles[entity.id]
@@ -127,13 +129,15 @@ fun MediaViewerScreen(
                     VideoPage(
                         videoFile = decryptedFile,
                         videoName = entity.name,
-                        onNavigateBack = onNavigateBack
+                        onNavigateBack = onNavigateBack,
+                        onZoomChanged = { zoomed -> isAnyPageZoomed = zoomed }
                     )
                 } else {
                     ImagePage(
                         imageFile = decryptedFile,
                         imageName = entity.name,
-                        onNavigateBack = onNavigateBack
+                        onNavigateBack = onNavigateBack,
+                        onZoomChanged = { zoomed -> isAnyPageZoomed = zoomed }
                     )
                 }
             } else {
@@ -148,12 +152,72 @@ fun MediaViewerScreen(
     }
 }
 
+private suspend fun PointerInputScope.detectTransformGesturesSelectively(
+    isZoomed: () -> Boolean,
+    onGesture: (centroid: Offset, pan: Offset, zoom: Float) -> Unit
+) {
+    awaitEachGesture {
+        val firstDown = awaitFirstDown(requireUnconsumed = false)
+
+        var shouldConsume = isZoomed()
+        if (shouldConsume) {
+            firstDown.consume()
+        }
+
+        var previousCentroid = firstDown.position
+        var previousSpan = 0f
+        var isMultiTouch = false
+
+        do {
+            val event = awaitPointerEvent()
+            val activeChanges = event.changes.filter { it.pressed }
+            if (activeChanges.isEmpty()) break
+
+            val currentCentroid = if (activeChanges.size >= 2) {
+                activeChanges.map { it.position }.reduce { acc, pos -> acc + pos } / activeChanges.size.toFloat()
+            } else {
+                activeChanges.first().position
+            }
+
+            if (activeChanges.size >= 2) {
+                if (!isMultiTouch) {
+                    isMultiTouch = true
+                    shouldConsume = true
+                    previousSpan = activeChanges.map { (it.position - currentCentroid).getDistance() }.sum() / activeChanges.size
+                    previousCentroid = currentCentroid
+                } else {
+                    val currentSpan = activeChanges.map { (it.position - currentCentroid).getDistance() }.sum() / activeChanges.size
+                    val zoom = if (previousSpan > 0f) currentSpan / previousSpan else 1f
+                    val pan = currentCentroid - previousCentroid
+
+                    onGesture(currentCentroid, pan, zoom)
+
+                    previousCentroid = currentCentroid
+                    previousSpan = currentSpan
+                }
+                activeChanges.forEach { it.consume() }
+            } else if (shouldConsume) {
+                if (isMultiTouch) {
+                    isMultiTouch = false
+                    previousCentroid = currentCentroid
+                } else {
+                    val pan = currentCentroid - previousCentroid
+                    onGesture(currentCentroid, pan, 1f)
+                    previousCentroid = currentCentroid
+                }
+                activeChanges.forEach { it.consume() }
+            }
+        } while (event.changes.any { it.pressed })
+    }
+}
+
 @OptIn(UnstableApi::class)
 @Composable
 private fun VideoPage(
     videoFile: File,
     videoName: String,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onZoomChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -168,6 +232,7 @@ private fun VideoPage(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var isLandscape by remember { mutableStateOf(false) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
@@ -232,21 +297,60 @@ private fun VideoPage(
         if (isLandscape) {
             decorView?.systemUiVisibility = (
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            )
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                )
         } else {
             decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
+    }
+
+    LaunchedEffect(scale) {
+        onZoomChanged(scale > 1f)
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onSizeChanged { containerSize = it }
+            .pointerInput(Unit) {
+                detectTransformGesturesSelectively(
+                    isZoomed = { scale > 1f }
+                ) { centroid, pan, zoom ->
+                    val oldScale = scale
+                    val newScale = (oldScale * zoom).coerceIn(1f, 4f)
+
+                    if (newScale > 1f || oldScale > 1f) {
+                        val containerCenter = Offset(
+                            containerSize.width.toFloat() / 2f,
+                            containerSize.height.toFloat() / 2f
+                        )
+                        val focalDelta = centroid - containerCenter
+                        val scaleCorrection = (oldScale - newScale) / oldScale
+                        val centroidOffset = Offset(
+                            focalDelta.x * scaleCorrection,
+                            focalDelta.y * scaleCorrection
+                        )
+
+                        scale = newScale
+
+                        if (newScale > 1f) {
+                            val maxOffsetX = (containerSize.width.toFloat() / 2f) * (newScale - 1f)
+                            val maxOffsetY = (containerSize.height.toFloat() / 2f) * (newScale - 1f)
+                            offset = Offset(
+                                x = (offset.x + pan.x + centroidOffset.x).coerceIn(-maxOffsetX, maxOffsetX),
+                                y = (offset.y + pan.y + centroidOffset.y).coerceIn(-maxOffsetY, maxOffsetY)
+                            )
+                        } else {
+                            offset = Offset.Zero
+                        }
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
@@ -262,19 +366,15 @@ private fun VideoPage(
                     }
                 )
             }
-            .pointerInput(Unit) {
-                detectZoomAndPan(
-                    onScaleChange = { newScale -> scale = newScale },
-                    onOffsetChange = { newOffset -> offset = newOffset },
-                    currentScale = { scale }
-                )
-            }
     ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = false
+                    isClickable = false
+                    isFocusable = false
+                    setOnTouchListener { _, _ -> false }
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -283,12 +383,13 @@ private fun VideoPage(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offset.x,
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
                     translationY = offset.y
-                ),
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                },
             update = { playerView ->
                 playerView.player = exoPlayer
             }
@@ -520,146 +621,70 @@ private fun VideoPage(
 private fun ImagePage(
     imageFile: File,
     imageName: String,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onZoomChanged: (Boolean) -> Unit
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(scale) {
+        onZoomChanged(scale > 1f)
+    }
 
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { containerSize = it }
+            .pointerInput(Unit) {
+                detectTransformGesturesSelectively(
+                    isZoomed = { scale > 1f }
+                ) { centroid, pan, zoom ->
+                    val oldScale = scale
+                    val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+
+                    if (newScale > 1f || oldScale > 1f) {
+                        val containerCenter = Offset(
+                            containerSize.width.toFloat() / 2f,
+                            containerSize.height.toFloat() / 2f
+                        )
+                        val focalDelta = centroid - containerCenter
+                        val scaleCorrection = (oldScale - newScale) / oldScale
+                        val centroidOffset = Offset(
+                            focalDelta.x * scaleCorrection,
+                            focalDelta.y * scaleCorrection
+                        )
+
+                        scale = newScale
+
+                        if (newScale > 1f) {
+                            val maxOffsetX = (containerSize.width.toFloat() / 2f) * (newScale - 1f)
+                            val maxOffsetY = (containerSize.height.toFloat() / 2f) * (newScale - 1f)
+                            offset = Offset(
+                                x = (offset.x + pan.x + centroidOffset.x).coerceIn(-maxOffsetX, maxOffsetX),
+                                y = (offset.y + pan.y + centroidOffset.y).coerceIn(-maxOffsetY, maxOffsetY)
+                            )
+                        } else {
+                            offset = Offset.Zero
+                        }
+                    }
+                }
+            }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+            }
     ) {
         Image(
             painter = rememberAsyncImagePainter(Uri.fromFile(imageFile)),
             contentDescription = imageName,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offset.x,
-                    translationY = offset.y
-                )
-                .pointerInput(Unit) {
-                    detectZoomAndPan(
-                        onScaleChange = { newScale -> scale = newScale },
-                        onOffsetChange = { newOffset -> offset = newOffset },
-                        currentScale = { scale }
-                    )
-                },
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit,
             alignment = Alignment.Center
         )
-    }
-}
-
-private suspend fun PointerInputScope.detectZoomAndPan(
-    onScaleChange: (Float) -> Unit,
-    onOffsetChange: (Offset) -> Unit,
-    currentScale: () -> Float
-) {
-    awaitPointerEventScope {
-        while (true) {
-            var downEvent = awaitPointerEvent()
-            while (downEvent.type != PointerEventType.Press) {
-                downEvent = awaitPointerEvent()
-            }
-            val initialChanges = downEvent.changes
-            val initialCentroid = if (initialChanges.size >= 2) {
-                initialChanges.map { it.position }.reduce { acc, pos -> acc + pos } / initialChanges.size.toFloat()
-            } else {
-                initialChanges.first().position
-            }
-            val initialSpan = if (initialChanges.size >= 2) {
-                initialChanges.map { (it.position - initialCentroid).getDistance() }.sum() / initialChanges.size
-            } else {
-                0f
-            }
-            val initialScale = currentScale()
-
-            var previousCentroid = initialCentroid
-            var previousSpan = initialSpan
-            var currentZoomedScale = initialScale
-            var totalOffset = Offset.Zero
-            var isMultiTouch = initialChanges.size >= 2
-
-            while (true) {
-                val event = awaitPointerEvent()
-                if (event.type != PointerEventType.Move) continue
-                val changes = event.changes
-                val allUp = changes.all { !it.pressed }
-
-                if (allUp) break
-
-                val currentCentroid = if (changes.size >= 2) {
-                    changes.map { it.position }.reduce { acc, pos -> acc + pos } / changes.size.toFloat()
-                } else {
-                    changes.first().position
-                }
-
-                if (changes.size >= 2) {
-                    if (!isMultiTouch) {
-                        isMultiTouch = true
-                        previousSpan = 0f
-                        previousCentroid = currentCentroid
-                        totalOffset = Offset.Zero
-                    }
-
-                    val currentSpan = changes.map { (it.position - currentCentroid).getDistance() }.sum() / changes.size
-
-                    val zoomFactor = if (previousSpan > 0f && initialSpan > 0f) {
-                        currentSpan / initialSpan
-                    } else {
-                        1f
-                    }
-
-                    currentZoomedScale = (initialScale * zoomFactor).coerceIn(1f, 4f)
-                    onScaleChange(currentZoomedScale)
-
-                    if (currentZoomedScale > 1f) {
-                        val pan = Offset(
-                            currentCentroid.x - previousCentroid.x,
-                            currentCentroid.y - previousCentroid.y
-                        )
-                        if (previousSpan > 0f) {
-                            totalOffset = Offset(
-                                totalOffset.x + pan.x,
-                                totalOffset.y + pan.y
-                            )
-                            val clampedOffset = Offset(
-                                totalOffset.x.coerceIn(-500f * (currentZoomedScale - 1), 500f * (currentZoomedScale - 1)),
-                                totalOffset.y.coerceIn(-500f * (currentZoomedScale - 1), 500f * (currentZoomedScale - 1))
-                            )
-                            onOffsetChange(clampedOffset)
-                        }
-                    } else {
-                        totalOffset = Offset.Zero
-                        onOffsetChange(Offset.Zero)
-                    }
-
-                    previousCentroid = currentCentroid
-                    previousSpan = currentSpan
-
-                    changes.forEach { it.consume() }
-                } else if (currentScale() > 1f) {
-                    val pan = Offset(
-                        currentCentroid.x - previousCentroid.x,
-                        currentCentroid.y - previousCentroid.y
-                    )
-                    totalOffset = Offset(
-                        totalOffset.x + pan.x,
-                        totalOffset.y + pan.y
-                    )
-                    val clampedOffset = Offset(
-                        totalOffset.x.coerceIn(-500f * (currentScale() - 1), 500f * (currentScale() - 1)),
-                        totalOffset.y.coerceIn(-500f * (currentScale() - 1), 500f * (currentScale() - 1))
-                    )
-                    onOffsetChange(clampedOffset)
-
-                    previousCentroid = currentCentroid
-                    changes.forEach { it.consume() }
-                }
-            }
-        }
     }
 }
 

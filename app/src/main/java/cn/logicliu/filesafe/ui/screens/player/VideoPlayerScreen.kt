@@ -160,6 +160,22 @@ fun VideoPlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    if (zoom.isNaN() || zoom.isInfinite() || zoom <= 0f) return@detectTransformGestures
+
+                    scale = (scale * zoom).coerceIn(1f, 4f)
+                    if (scale > 1f) {
+                        val maxOffset = 500f * (scale - 1)
+                        offset = Offset(
+                            x = (offset.x + pan.x).coerceIn(-maxOffset, maxOffset),
+                            y = (offset.y + pan.y).coerceIn(-maxOffset, maxOffset)
+                        )
+                    } else {
+                        offset = Offset.Zero
+                    }
+                }
+            }
+            .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
                         showControls = !showControls
@@ -174,28 +190,15 @@ fun VideoPlayerScreen(
                     }
                 )
             }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    if (zoom.isNaN() || zoom.isInfinite() || zoom <= 0f) return@detectTransformGestures
-                    
-                    scale = (scale * zoom).coerceIn(1f, 4f)
-                    if (scale > 1f) {
-                        val maxOffset = 500f * (scale - 1)
-                        offset = Offset(
-                            x = (offset.x + pan.x).coerceIn(-maxOffset, maxOffset),
-                            y = (offset.y + pan.y).coerceIn(-maxOffset, maxOffset)
-                        )
-                    } else {
-                        offset = Offset.Zero
-                    }
-                }
-            }
     ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = false
+                    isClickable = false
+                    isFocusable = false
+                    setOnTouchListener { _, _ -> false }
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -209,6 +212,7 @@ fun VideoPlayerScreen(
                     scaleY = scale
                     translationX = offset.x
                     translationY = offset.y
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                 },
             update = { playerView ->
                 playerView.player = exoPlayer

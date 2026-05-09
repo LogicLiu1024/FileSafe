@@ -27,6 +27,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import coil.compose.rememberAsyncImagePainter
 import java.io.File
 
@@ -38,6 +40,7 @@ fun ImageViewerScreen(
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
     BackHandler(onBack = onNavigateBack)
 
@@ -57,33 +60,51 @@ fun ImageViewerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .onSizeChanged { containerSize = it }
+                .pointerInput(Unit) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        val oldScale = scale
+                        val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+
+                        if (newScale > 1f || oldScale > 1f) {
+                            val containerCenter = Offset(
+                                containerSize.width.toFloat() / 2f,
+                                containerSize.height.toFloat() / 2f
+                            )
+                            val focalDelta = centroid - containerCenter
+                            val scaleCorrection = (oldScale - newScale) / oldScale
+                            val centroidOffset = Offset(
+                                focalDelta.x * scaleCorrection,
+                                focalDelta.y * scaleCorrection
+                            )
+
+                            scale = newScale
+
+                            if (newScale > 1f) {
+                                val maxOffsetX = (containerSize.width.toFloat() / 2f) * (newScale - 1f)
+                                val maxOffsetY = (containerSize.height.toFloat() / 2f) * (newScale - 1f)
+                                offset = Offset(
+                                    x = (offset.x + pan.x + centroidOffset.x).coerceIn(-maxOffsetX, maxOffsetX),
+                                    y = (offset.y + pan.y + centroidOffset.y).coerceIn(-maxOffsetY, maxOffsetY)
+                                )
+                            } else {
+                                offset = Offset.Zero
+                            }
+                        }
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                }
         ) {
             Image(
                 painter = rememberAsyncImagePainter(Uri.fromFile(imageFile)),
                 contentDescription = imageFile.name,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offset.x,
-                        translationY = offset.y
-                    )
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val newScale = (scale * zoom).coerceIn(1f, 4f)
-                            if (newScale > 1f) {
-                                scale = newScale
-                                offset = Offset(
-                                    (offset.x + pan.x).coerceIn(-500f * (newScale - 1), 500f * (newScale - 1)),
-                                    (offset.y + pan.y).coerceIn(-500f * (newScale - 1), 500f * (newScale - 1))
-                                )
-                            } else {
-                                scale = 1f
-                                offset = Offset.Zero
-                            }
-                        }
-                    },
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.Center
             )
