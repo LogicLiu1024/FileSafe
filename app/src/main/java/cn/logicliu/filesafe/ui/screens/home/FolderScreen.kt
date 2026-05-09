@@ -1,7 +1,9 @@
 package cn.logicliu.filesafe.ui.screens.home
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -63,8 +65,12 @@ import cn.logicliu.filesafe.ui.components.FileOperation
 import cn.logicliu.filesafe.ui.components.FileOperationDialog
 import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.FolderOperationDialog
+import cn.logicliu.filesafe.ui.components.FolderOperationMenu
+import cn.logicliu.filesafe.ui.components.FileOperationMenu
+import cn.logicliu.filesafe.ui.screens.viewer.FileViewerScreen
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
 import cn.logicliu.filesafe.ui.viewmodel.ViewMode
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,11 +95,16 @@ fun FolderScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val operationSuccess by viewModel.operationSuccess.collectAsState()
+    val selectedFileForView by viewModel.selectedFileForView.collectAsState()
+    val exportFileUri by viewModel.exportFileUri.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedItem by remember { mutableStateOf<Any?>(null) }
+    var showFileOperationMenu by remember { mutableStateOf(false) }
+    var showFolderOperationMenu by remember { mutableStateOf(false) }
     var showOperationDialog by remember { mutableStateOf<FileOperation?>(null) }
+    var targetOperationFolderId by remember { mutableStateOf<Long?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -101,6 +112,17 @@ fun FolderScreen(
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
                 viewModel.importFile(uri)
+            }
+        }
+    }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        uri?.let {
+            exportFileUri?.let { sourceUri ->
+                copyFile(context, sourceUri, it)
+                viewModel.clearExportFileUri()
             }
         }
     }
@@ -123,7 +145,22 @@ fun FolderScreen(
         }
     }
 
+    LaunchedEffect(exportFileUri) {
+        exportFileUri?.let { uri ->
+            val file = File(uri.path ?: "")
+            saveFileLauncher.launch(file.name)
+        }
+    }
+
     val allFolders = currentFolders
+
+    if (selectedFileForView != null) {
+        FileViewerScreen(
+            file = selectedFileForView!!,
+            onNavigateBack = { viewModel.clearSelectedFileForView() }
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -229,7 +266,7 @@ fun FolderScreen(
                             onClick = { onNavigateToSubFolder(folder.id, folder.name) },
                             onLongClick = {
                                 selectedItem = folder
-                                showOperationDialog = FileOperation.DELETE
+                                showFolderOperationMenu = true
                             }
                         )
                     }
@@ -237,10 +274,10 @@ fun FolderScreen(
                         FileListItem(
                             file = file,
                             isGridView = false,
-                            onClick = { },
+                            onClick = { viewModel.viewFile(file.id) },
                             onLongClick = {
                                 selectedItem = file
-                                showOperationDialog = FileOperation.DELETE
+                                showFileOperationMenu = true
                             }
                         )
                     }
@@ -262,7 +299,7 @@ fun FolderScreen(
                             onClick = { onNavigateToSubFolder(folder.id, folder.name) },
                             onLongClick = {
                                 selectedItem = folder
-                                showOperationDialog = FileOperation.DELETE
+                                showFolderOperationMenu = true
                             }
                         )
                     }
@@ -270,10 +307,10 @@ fun FolderScreen(
                         FileListItem(
                             file = file,
                             isGridView = true,
-                            onClick = { },
+                            onClick = { viewModel.viewFile(file.id) },
                             onLongClick = {
                                 selectedItem = file
-                                showOperationDialog = FileOperation.DELETE
+                                showFileOperationMenu = true
                             }
                         )
                     }
@@ -292,6 +329,58 @@ fun FolderScreen(
         )
     }
 
+    if (showFileOperationMenu && selectedItem is FileItemEntity) {
+        FileOperationMenu(
+            onDismiss = { 
+                showFileOperationMenu = false
+                selectedItem = null
+            },
+            onView = {
+                viewModel.viewFile((selectedItem as FileItemEntity).id)
+            },
+            onCopy = {
+                showOperationDialog = FileOperation.MOVE
+                targetOperationFolderId = null
+            },
+            onMove = {
+                showOperationDialog = FileOperation.MOVE
+                targetOperationFolderId = (selectedItem as FileItemEntity).id
+            },
+            onRename = {
+                showOperationDialog = FileOperation.RENAME
+            },
+            onExport = {
+                viewModel.exportFile((selectedItem as FileItemEntity).id)
+            },
+            onDelete = {
+                showOperationDialog = FileOperation.DELETE
+            }
+        )
+    }
+
+    if (showFolderOperationMenu && selectedItem is FolderEntity) {
+        FolderOperationMenu(
+            onDismiss = { 
+                showFolderOperationMenu = false
+                selectedItem = null
+            },
+            onCopy = {
+                showOperationDialog = FileOperation.MOVE
+                targetOperationFolderId = null
+            },
+            onMove = {
+                showOperationDialog = FileOperation.MOVE
+                targetOperationFolderId = (selectedItem as FolderEntity).id
+            },
+            onRename = {
+                showOperationDialog = FileOperation.RENAME
+            },
+            onDelete = {
+                showOperationDialog = FileOperation.DELETE
+            }
+        )
+    }
+
     selectedItem?.let { item ->
         showOperationDialog?.let { operation ->
             when (item) {
@@ -303,6 +392,7 @@ fun FolderScreen(
                         onDismiss = {
                             selectedItem = null
                             showOperationDialog = null
+                            targetOperationFolderId = null
                         },
                         onConfirm = { value ->
                             when (operation) {
@@ -313,25 +403,39 @@ fun FolderScreen(
                                     viewModel.deleteFile(item.id)
                                 }
                                 FileOperation.MOVE -> {
-                                    value?.toLongOrNull()?.let { targetId ->
-                                        viewModel.moveFile(item.id, targetId)
+                                    if (targetOperationFolderId == null) {
+                                        // Copy operation
+                                        value?.toLongOrNull()?.let { targetId ->
+                                            viewModel.copyFile(item.id, targetId)
+                                        } ?: run {
+                                            viewModel.copyFile(item.id, null)
+                                        }
+                                    } else {
+                                        // Move operation
+                                        value?.toLongOrNull()?.let { targetId ->
+                                            viewModel.moveFile(item.id, targetId)
+                                        } ?: run {
+                                            viewModel.moveFile(item.id, null)
+                                        }
                                     }
                                 }
                                 else -> {}
                             }
                             selectedItem = null
                             showOperationDialog = null
+                            targetOperationFolderId = null
                         }
                     )
                 }
                 is FolderEntity -> {
                     FolderOperationDialog(
                         folder = item,
-                        folders = allFolders,
+                        folders = allFolders.filter { it.id != item.id },
                         operation = operation,
                         onDismiss = {
                             selectedItem = null
                             showOperationDialog = null
+                            targetOperationFolderId = null
                         },
                         onConfirm = { value ->
                             when (operation) {
@@ -341,10 +445,28 @@ fun FolderScreen(
                                 FileOperation.DELETE -> {
                                     viewModel.deleteFolder(item.id)
                                 }
+                                FileOperation.MOVE -> {
+                                    if (targetOperationFolderId == null) {
+                                        // Copy operation
+                                        value?.toLongOrNull()?.let { targetId ->
+                                            viewModel.copyFolder(item.id, targetId)
+                                        } ?: run {
+                                            viewModel.copyFolder(item.id, null)
+                                        }
+                                    } else {
+                                        // Move operation
+                                        value?.toLongOrNull()?.let { targetId ->
+                                            viewModel.moveFolder(item.id, targetId)
+                                        } ?: run {
+                                            viewModel.moveFolder(item.id, null)
+                                        }
+                                    }
+                                }
                                 else -> {}
                             }
                             selectedItem = null
                             showOperationDialog = null
+                            targetOperationFolderId = null
                         }
                     )
                 }
@@ -360,11 +482,20 @@ fun FolderScreen(
                         onConfirm = { _ ->
                             selectedItem = null
                             showOperationDialog = null
+                            viewModel.deleteFolder(folderId)
                             onNavigateBack()
                         }
                     )
                 }
             }
+        }
+    }
+}
+
+private fun copyFile(context: Context, sourceUri: Uri, destinationUri: Uri) {
+    context.contentResolver.openInputStream(sourceUri)?.use { input: java.io.InputStream ->
+        context.contentResolver.openOutputStream(destinationUri)?.use { output: java.io.OutputStream ->
+            input.copyTo(output)
         }
     }
 }

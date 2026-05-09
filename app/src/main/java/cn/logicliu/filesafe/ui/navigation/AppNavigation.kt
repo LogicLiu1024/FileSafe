@@ -16,6 +16,7 @@ import cn.logicliu.filesafe.ui.screens.home.FolderScreen
 import cn.logicliu.filesafe.ui.screens.home.HomeScreen
 import cn.logicliu.filesafe.ui.screens.home.TrashScreen
 import cn.logicliu.filesafe.ui.screens.player.VideoPlayerScreen
+import cn.logicliu.filesafe.ui.screens.viewer.FileViewerScreen
 import cn.logicliu.filesafe.ui.screens.settings.AboutScreen
 import cn.logicliu.filesafe.ui.screens.settings.BackupScreen
 import cn.logicliu.filesafe.ui.screens.settings.SecuritySettingsScreen

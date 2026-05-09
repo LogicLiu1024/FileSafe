@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 
 enum class FileCategory {
     ALL, IMAGE, VIDEO, DOCUMENT, OTHER
@@ -228,6 +229,110 @@ class FileViewModel(
             )
             _isLoading.value = false
         }
+    }
+
+    fun copyFile(fileId: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.copyFile(fileId, targetFolderId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件复制成功"
+                },
+                onFailure = { e ->
+                    _error.value = "复制文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun copyFolder(folderId: Long, targetParentFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.copyFolder(folderId, targetParentFolderId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件夹复制成功"
+                },
+                onFailure = { e ->
+                    _error.value = "复制文件夹失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun moveFolder(folderId: Long, targetParentFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.moveFolder(folderId, targetParentFolderId)
+            result.fold(
+                onSuccess = {
+                    _operationSuccess.value = "文件夹移动成功"
+                },
+                onFailure = { e ->
+                    _error.value = "移动文件夹失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    private val _selectedFileForView = MutableStateFlow<File?>(null)
+    val selectedFileForView: StateFlow<File?> = _selectedFileForView.asStateFlow()
+
+    fun viewFile(fileId: Long) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.getDecryptedFile(fileId)
+            result.fold(
+                onSuccess = { file ->
+                    _selectedFileForView.value = file
+                },
+                onFailure = { e ->
+                    _error.value = "打开文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun clearSelectedFileForView() {
+        _selectedFileForView.value = null
+    }
+
+    private val _exportFileUri = MutableStateFlow<Uri?>(null)
+    val exportFileUri: StateFlow<Uri?> = _exportFileUri.asStateFlow()
+
+    fun exportFile(fileId: Long) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            val result = fileRepository.exportFile(fileId)
+            result.fold(
+                onSuccess = { uri ->
+                    _exportFileUri.value = uri
+                },
+                onFailure = { e ->
+                    _error.value = "导出文件失败: ${e.message}"
+                }
+            )
+            _isLoading.value = false
+        }
+    }
+
+    fun clearExportFileUri() {
+        _exportFileUri.value = null
     }
 
     fun restoreFromTrash(trashItemId: Long) {

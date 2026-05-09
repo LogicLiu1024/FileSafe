@@ -118,6 +118,145 @@ class FileRepository(
         }
     }
 
+    suspend fun getDecryptedFile(fileId: Long): Result<File> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val fileEntity = fileDataStore.getFileById(fileId).first()
+                    ?: return@withContext Result.failure(Exception("File not found"))
+
+                val encryptedFile = File(fileEntity.encryptedPath)
+                if (!encryptedFile.exists()) {
+                    return@withContext Result.failure(Exception("Encrypted file not found"))
+                }
+
+                val decryptedFile = File(tempDir, fileEntity.name)
+                val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
+
+                if (!decryptSuccess) {
+                    return@withContext Result.failure(Exception("Decryption failed"))
+                }
+
+                Result.success(decryptedFile)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun copyFile(fileId: Long, targetFolderId: Long?): Result<FileItemEntity> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val originalFile = fileDataStore.getFileById(fileId).first()
+                    ?: return@withContext Result.failure(Exception("File not found"))
+
+                val encryptedFile = File(originalFile.encryptedPath)
+                if (!encryptedFile.exists()) {
+                    return@withContext Result.failure(Exception("Encrypted file not found"))
+                }
+
+                val newEncryptedFileName = "${UUID.randomUUID()}.enc"
+                val newEncryptedFile = File(encryptedDir, newEncryptedFileName)
+                encryptedFile.copyTo(newEncryptedFile, overwrite = true)
+
+                val currentTime = System.currentTimeMillis()
+                val newFileEntity = FileItemEntity(
+                    name = originalFile.name,
+                    path = originalFile.path,
+                    encryptedPath = newEncryptedFile.absolutePath,
+                    size = originalFile.size,
+                    mimeType = originalFile.mimeType,
+                    folderId = targetFolderId,
+                    createdAt = currentTime,
+                    modifiedAt = currentTime,
+                    isEncrypted = true
+                )
+
+                val id = fileDataStore.insertFile(newFileEntity)
+                Result.success(newFileEntity.copy(id = id))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun moveFolder(folderId: Long, targetParentFolderId: Long?): Result<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val folder = fileDataStore.getFolderById(folderId).first()
+                    ?: return@withContext Result.failure(Exception("Folder not found"))
+
+                if (targetParentFolderId != null) {
+                    val targetFolder = fileDataStore.getFolderById(targetParentFolderId).first()
+                    if (targetFolder == null) {
+                        return@withContext Result.failure(Exception("Target folder not found"))
+                    }
+                    var parent = targetFolder.parentId
+                    var isDescendant = false
+                    while (parent != null && !isDescendant) {
+                        if (parent == folderId) {
+                            isDescendant = true
+                        } else {
+                            val p = fileDataStore.getFolderById(parent).first()
+                            parent = p?.parentId
+                        }
+                    }
+                    if (isDescendant) {
+                        return@withContext Result.failure(Exception("Cannot move folder into its child"))
+                    }
+                }
+
+                val updatedFolder = folder.copy(
+                    parentId = targetParentFolderId,
+                    modifiedAt = System.currentTimeMillis()
+                )
+                fileDataStore.updateFolder(updatedFolder)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun copyFolder(folderId: Long, targetParentFolderId: Long?): Result<FolderEntity> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val originalFolder = fileDataStore.getFolderById(folderId).first()
+                    ?: return@withContext Result.failure(Exception("Folder not found"))
+
+                val newEncryptedFolderPath = File(encryptedDir, UUID.randomUUID().toString()).apply {
+                    mkdirs()
+                }.absolutePath
+
+                val currentTime = System.currentTimeMillis()
+                val newFolder = FolderEntity(
+                    name = originalFolder.name,
+                    path = "${targetParentFolderId ?: "root"}/${originalFolder.name}",
+                    encryptedPath = newEncryptedFolderPath,
+                    parentId = targetParentFolderId,
+                    createdAt = currentTime,
+                    modifiedAt = currentTime,
+                    isEncrypted = true
+                )
+
+                val newFolderId = fileDataStore.insertFolder(newFolder)
+
+                val files = fileDataStore.getFilesByFolder(folderId).first()
+                files.forEach { file ->
+                    copyFile(file.id, newFolderId)
+                }
+
+                val subfolders = fileDataStore.getFoldersByParent(folderId).first()
+                subfolders.forEach { subfolder ->
+                    copyFolder(subfolder.id, newFolderId)
+                }
+
+                Result.success(newFolder.copy(id = newFolderId))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun createFolder(name: String, parentId: Long? = null): Result<FolderEntity> {
         return withContext(Dispatchers.IO) {
             try {
