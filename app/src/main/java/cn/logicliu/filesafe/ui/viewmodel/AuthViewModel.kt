@@ -31,7 +31,7 @@ class AuthViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, SecuritySettingsManager.DEFAULT_AUTO_LOCK_TIME)
 
     val screenshotEnabled: StateFlow<Boolean> = securitySettingsManager.screenshotEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val screenOffLockEnabled: StateFlow<Boolean> = securitySettingsManager.screenOffLockEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)

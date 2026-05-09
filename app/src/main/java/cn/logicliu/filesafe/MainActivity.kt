@@ -71,7 +71,7 @@ class MainActivity : FragmentActivity() {
                     // 处理防截屏设置
                     val screenshotEnabled by authViewModel.screenshotEnabled.collectAsState()
                     LaunchedEffect(screenshotEnabled) {
-                        updateScreenshotFlag(!screenshotEnabled)
+                        updateScreenshotFlag(screenshotEnabled)
                     }
                     
                     // 处理息屏锁定设置

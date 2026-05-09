@@ -22,7 +22,7 @@ class SecuritySettingsManager(
     }
 
     val screenshotEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[SCREENSHOT_ENABLED_KEY] ?: true
+        preferences[SCREENSHOT_ENABLED_KEY] ?: false
     }
 
     val biometricEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
