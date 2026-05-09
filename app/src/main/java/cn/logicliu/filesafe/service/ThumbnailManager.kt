@@ -17,6 +17,7 @@ object ThumbnailManager {
     private const val THUMBNAIL_DIR = "thumbnails"
     private const val THUMBNAIL_SIZE = 256
     private const val THUMBNAIL_QUALITY = 85
+    private const val MAX_THUMBNAIL_FILE_SIZE = 100L * 1024 * 1024
 
     private fun getThumbnailDir(context: Context): File =
         File(context.filesDir, THUMBNAIL_DIR).apply { mkdirs() }
@@ -55,6 +56,8 @@ object ThumbnailManager {
         mimeType: String?
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            if (encryptedFile.length() > MAX_THUMBNAIL_FILE_SIZE) return@withContext false
+
             val tempDir = File(context.cacheDir, "thumb_temp").apply { mkdirs() }
             val tempFile = File(tempDir, "thumb_${fileId}.tmp")
 

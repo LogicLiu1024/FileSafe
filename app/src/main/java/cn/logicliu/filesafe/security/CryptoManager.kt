@@ -430,7 +430,7 @@ class CryptoManager(
                 if (isChunked) {
                     decryptFileInChunks(fis, outputFile, algorithm, progressCallback)
                 } else {
-                    decryptFileInOneGo(fis, outputFile, algorithm, progressCallback)
+                    decryptFileInOneGo(fis, outputFile, algorithm, inputFile, progressCallback)
                 }
             }
             true
@@ -444,25 +444,42 @@ class CryptoManager(
         fis: FileInputStream,
         outputFile: File,
         algorithm: EncryptionAlgorithm,
+        inputFile: File,
         progressCallback: ((Float) -> Unit)?
     ): Boolean {
         return try {
+            val headerSize = 2L
+            val remainingSize = inputFile.length() - headerSize
+            var totalRead = 0L
+
             when (algorithm) {
                 EncryptionAlgorithm.AES_256_GCM -> {
                     val iv = ByteArray(12)
                     fis.read(iv)
+                    totalRead += 12
                     progressCallback?.invoke(0.3f)
 
                     val cipher = Cipher.getInstance(AES_TRANSFORMATION)
                     val spec = GCMParameterSpec(128, iv)
                     cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
 
-                    val encryptedBytes = fis.readBytes()
-                    progressCallback?.invoke(0.7f)
-                    val decryptedBytes = cipher.doFinal(encryptedBytes)
-
+                    val buffer = ByteArray(8192)
                     FileOutputStream(outputFile).use { fos ->
-                        fos.write(decryptedBytes)
+                        var bytesRead: Int
+                        while (fis.read(buffer).also { bytesRead = it } != -1) {
+                            totalRead += bytesRead
+                            val decrypted = cipher.update(buffer, 0, bytesRead)
+                            if (decrypted != null && decrypted.isNotEmpty()) {
+                                fos.write(decrypted)
+                            }
+                            if (remainingSize > 0) {
+                                progressCallback?.invoke(0.3f + 0.6f * totalRead.toFloat() / remainingSize)
+                            }
+                        }
+                        val finalBytes = cipher.doFinal()
+                        if (finalBytes.isNotEmpty()) {
+                            fos.write(finalBytes)
+                        }
                     }
                 }
                 EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
@@ -470,6 +487,7 @@ class CryptoManager(
                     fis.read(nonce)
                     val keyBytes = ByteArray(32)
                     fis.read(keyBytes)
+                    totalRead += 56
                     progressCallback?.invoke(0.3f)
 
                     val subkey = hChaCha20Subkey(keyBytes, nonce.copyOfRange(0, 16))
@@ -478,14 +496,22 @@ class CryptoManager(
                     val cipher = ChaCha20Poly1305()
                     cipher.init(false, AEADParameters(KeyParameter(subkey), 128, internalNonce))
 
-                    val encryptedBytes = fis.readBytes()
-                    progressCallback?.invoke(0.7f)
-                    val decryptedBytes = ByteArray(cipher.getOutputSize(encryptedBytes.size))
-                    val len = cipher.processBytes(encryptedBytes, 0, encryptedBytes.size, decryptedBytes, 0)
-                    cipher.doFinal(decryptedBytes, len)
-
+                    val inBuffer = ByteArray(8192)
+                    val outBuffer = ByteArray(cipher.getUpdateOutputSize(8192))
                     FileOutputStream(outputFile).use { fos ->
-                        fos.write(decryptedBytes, 0, len)
+                        var bytesRead: Int
+                        while (fis.read(inBuffer).also { bytesRead = it } != -1) {
+                            totalRead += bytesRead
+                            val len = cipher.processBytes(inBuffer, 0, bytesRead, outBuffer, 0)
+                            fos.write(outBuffer, 0, len)
+                            if (remainingSize > 0) {
+                                progressCallback?.invoke(0.3f + 0.6f * totalRead.toFloat() / remainingSize)
+                            }
+                        }
+                        val finalLen = cipher.doFinal(outBuffer, 0)
+                        if (finalLen > 0) {
+                            fos.write(outBuffer, 0, finalLen)
+                        }
                     }
                 }
             }
@@ -611,18 +637,28 @@ class CryptoManager(
                 } else {
                     val iv = ByteArray(12)
                     fis.read(iv)
+                    processed += 12
                     progressCallback?.invoke(0.3f)
 
                     val cipher = Cipher.getInstance(AES_TRANSFORMATION)
                     val spec = GCMParameterSpec(128, iv)
                     cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
 
-                    val encryptedBytes = fis.readBytes()
-                    progressCallback?.invoke(0.7f)
-                    val decryptedBytes = cipher.doFinal(encryptedBytes)
-
+                    val buffer = ByteArray(8192)
                     FileOutputStream(outputFile).use { fos ->
-                        fos.write(decryptedBytes)
+                        var bytesRead: Int
+                        while (fis.read(buffer).also { bytesRead = it } != -1) {
+                            processed += bytesRead
+                            val decrypted = cipher.update(buffer, 0, bytesRead)
+                            if (decrypted != null && decrypted.isNotEmpty()) {
+                                fos.write(decrypted)
+                            }
+                            progressCallback?.invoke(processed.toFloat() / totalSize)
+                        }
+                        val finalBytes = cipher.doFinal()
+                        if (finalBytes.isNotEmpty()) {
+                            fos.write(finalBytes)
+                        }
                     }
                 }
             }
