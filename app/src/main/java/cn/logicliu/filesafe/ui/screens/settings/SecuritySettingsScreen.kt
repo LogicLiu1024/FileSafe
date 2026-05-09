@@ -65,6 +65,7 @@ fun SecuritySettingsScreen(
     val autoLockTime by viewModel.autoLockTime.collectAsState()
     val screenshotEnabled by viewModel.screenshotEnabled.collectAsState()
     val biometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val screenOffLockEnabled by viewModel.screenOffLockEnabled.collectAsState()
 
     var showAutoLockDialog by remember { mutableStateOf(false) }
 
@@ -167,6 +168,43 @@ fun SecuritySettingsScreen(
                         Switch(
                             checked = screenshotEnabled,
                             onCheckedChange = { viewModel.setScreenshotEnabled(it) }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.setScreenOffLockEnabled(!screenOffLockEnabled)
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "息屏锁定",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "屏幕关闭时立即锁定应用",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Switch(
+                            checked = screenOffLockEnabled,
+                            onCheckedChange = { viewModel.setScreenOffLockEnabled(it) }
                         )
                     }
                 }

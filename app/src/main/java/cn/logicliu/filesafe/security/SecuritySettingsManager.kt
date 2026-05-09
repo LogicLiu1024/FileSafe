@@ -29,6 +29,10 @@ class SecuritySettingsManager(
         preferences[BIOMETRIC_ENABLED_KEY] ?: false
     }
 
+    val screenOffLockEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[SCREEN_OFF_LOCK_ENABLED_KEY] ?: false
+    }
+
     suspend fun setAutoLockTime(timeMillis: Long) {
         dataStore.edit { preferences ->
             preferences[AUTO_LOCK_TIME_KEY] = timeMillis
@@ -47,10 +51,17 @@ class SecuritySettingsManager(
         }
     }
 
+    suspend fun setScreenOffLockEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[SCREEN_OFF_LOCK_ENABLED_KEY] = enabled
+        }
+    }
+
     companion object {
         private val AUTO_LOCK_TIME_KEY = longPreferencesKey("auto_lock_time")
         private val SCREENSHOT_ENABLED_KEY = booleanPreferencesKey("screenshot_enabled")
         private val BIOMETRIC_ENABLED_KEY = booleanPreferencesKey("biometric_enabled")
+        private val SCREEN_OFF_LOCK_ENABLED_KEY = booleanPreferencesKey("screen_off_lock_enabled")
         
         const val DEFAULT_AUTO_LOCK_TIME = 5 * 60 * 1000L // 5分钟
         val AUTO_LOCK_OPTIONS = listOf(

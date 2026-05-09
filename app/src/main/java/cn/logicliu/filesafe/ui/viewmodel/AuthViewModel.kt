@@ -33,6 +33,9 @@ class AuthViewModel(
     val screenshotEnabled: StateFlow<Boolean> = securitySettingsManager.screenshotEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val screenOffLockEnabled: StateFlow<Boolean> = securitySettingsManager.screenOffLockEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     val isSecurityQuestionsSet: StateFlow<Boolean> = securityQuestionManager.securityQuestionsSet
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -182,6 +185,12 @@ class AuthViewModel(
     fun setBiometricEnabled(enabled: Boolean) {
         viewModelScope.launch {
             securitySettingsManager.setBiometricEnabled(enabled)
+        }
+    }
+
+    fun setScreenOffLockEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            securitySettingsManager.setScreenOffLockEnabled(enabled)
         }
     }
 
