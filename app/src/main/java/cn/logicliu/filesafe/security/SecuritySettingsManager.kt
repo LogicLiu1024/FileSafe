@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -33,6 +34,15 @@ class SecuritySettingsManager(
         preferences[SCREEN_OFF_LOCK_ENABLED_KEY] ?: false
     }
 
+    val themeMode: Flow<ThemeMode> = dataStore.data.map { preferences ->
+        val modeString = preferences[THEME_MODE_KEY] ?: ThemeMode.LIGHT.name
+        try {
+            ThemeMode.valueOf(modeString)
+        } catch (e: IllegalArgumentException) {
+            ThemeMode.LIGHT
+        }
+    }
+
     suspend fun setAutoLockTime(timeMillis: Long) {
         dataStore.edit { preferences ->
             preferences[AUTO_LOCK_TIME_KEY] = timeMillis
@@ -57,11 +67,18 @@ class SecuritySettingsManager(
         }
     }
 
+    suspend fun setThemeMode(mode: ThemeMode) {
+        dataStore.edit { preferences ->
+            preferences[THEME_MODE_KEY] = mode.name
+        }
+    }
+
     companion object {
         private val AUTO_LOCK_TIME_KEY = longPreferencesKey("auto_lock_time")
         private val SCREENSHOT_ENABLED_KEY = booleanPreferencesKey("screenshot_enabled")
         private val BIOMETRIC_ENABLED_KEY = booleanPreferencesKey("biometric_enabled")
         private val SCREEN_OFF_LOCK_ENABLED_KEY = booleanPreferencesKey("screen_off_lock_enabled")
+        private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         
         const val DEFAULT_AUTO_LOCK_TIME = 5 * 60 * 1000L // 5分钟
         val AUTO_LOCK_OPTIONS = listOf(
@@ -73,4 +90,10 @@ class SecuritySettingsManager(
             60 * 60 * 1000L to "1小时"
         )
     }
+}
+
+enum class ThemeMode {
+    LIGHT,
+    DARK,
+    SYSTEM
 }

@@ -14,9 +14,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,23 +26,36 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import cn.logicliu.filesafe.security.ThemeMode
+import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    authViewModel: AuthViewModel,
     onNavigateBack: () -> Unit,
     onNavigateToSecuritySettings: () -> Unit,
     onNavigateToBackup: () -> Unit,
     onNavigateToAbout: () -> Unit
 ) {
+    val themeMode by authViewModel.themeMode.collectAsState()
+    var showThemeDialog by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -66,6 +81,35 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            ) {
+                Column {
+                    Text(
+                        text = "外观",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+
+                    SettingsItem(
+                        icon = Icons.Default.DarkMode,
+                        title = "深色模式",
+                        subtitle = when (themeMode) {
+                            ThemeMode.LIGHT -> "浅色模式"
+                            ThemeMode.DARK -> "深色模式"
+                            ThemeMode.SYSTEM -> "跟随系统"
+                        },
+                        onClick = { showThemeDialog = true }
+                    )
+                }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -140,6 +184,17 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+
+    if (showThemeDialog) {
+        ThemeModeDialog(
+            currentMode = themeMode,
+            onDismiss = { showThemeDialog = false },
+            onModeSelected = { mode ->
+                authViewModel.setThemeMode(mode)
+                showThemeDialog = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -175,5 +230,72 @@ private fun SettingsItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+private fun ThemeModeDialog(
+    currentMode: ThemeMode,
+    onDismiss: () -> Unit,
+    onModeSelected: (ThemeMode) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择主题模式") },
+        text = {
+            Column {
+                ThemeModeOption(
+                    mode = ThemeMode.LIGHT,
+                    label = "浅色模式",
+                    isSelected = currentMode == ThemeMode.LIGHT,
+                    onClick = { onModeSelected(ThemeMode.LIGHT) }
+                )
+                
+                ThemeModeOption(
+                    mode = ThemeMode.DARK,
+                    label = "深色模式",
+                    isSelected = currentMode == ThemeMode.DARK,
+                    onClick = { onModeSelected(ThemeMode.DARK) }
+                )
+                
+                ThemeModeOption(
+                    mode = ThemeMode.SYSTEM,
+                    label = "跟随系统",
+                    isSelected = currentMode == ThemeMode.SYSTEM,
+                    onClick = { onModeSelected(ThemeMode.SYSTEM) }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ThemeModeOption(
+    mode: ThemeMode,
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = isSelected,
+            onClick = onClick
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge
+        )
     }
 }

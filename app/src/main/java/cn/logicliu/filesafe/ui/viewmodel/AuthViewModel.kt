@@ -6,6 +6,7 @@ import cn.logicliu.filesafe.security.PasswordManager
 import cn.logicliu.filesafe.security.SecurityQuestion
 import cn.logicliu.filesafe.security.SecurityQuestionManager
 import cn.logicliu.filesafe.security.SecuritySettingsManager
+import cn.logicliu.filesafe.security.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +36,9 @@ class AuthViewModel(
 
     val screenOffLockEnabled: StateFlow<Boolean> = securitySettingsManager.screenOffLockEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val themeMode: StateFlow<ThemeMode> = securitySettingsManager.themeMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeMode.LIGHT)
 
     val isSecurityQuestionsSet: StateFlow<Boolean> = securityQuestionManager.securityQuestionsSet
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -191,6 +195,12 @@ class AuthViewModel(
     fun setScreenOffLockEnabled(enabled: Boolean) {
         viewModelScope.launch {
             securitySettingsManager.setScreenOffLockEnabled(enabled)
+        }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch {
+            securitySettingsManager.setThemeMode(mode)
         }
     }
 

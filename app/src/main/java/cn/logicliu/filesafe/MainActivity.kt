@@ -29,6 +29,7 @@ import cn.logicliu.filesafe.ui.screens.auth.LoginScreen
 import cn.logicliu.filesafe.ui.screens.auth.SetupPasswordScreen
 import cn.logicliu.filesafe.ui.theme.FileSafeTheme
 import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
+import cn.logicliu.filesafe.security.ThemeMode
 import kotlinx.coroutines.delay
 
 class MainActivity : FragmentActivity() {
@@ -63,7 +64,9 @@ class MainActivity : FragmentActivity() {
         )
 
         setContent {
-            FileSafeTheme {
+            val themeMode by authViewModel.themeMode.collectAsState()
+            
+            FileSafeTheme(themeMode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
