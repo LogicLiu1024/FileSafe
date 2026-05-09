@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -228,12 +229,16 @@ class EncryptionService : Service() {
                     updateNotification("正在复制文件: $fileName", adjustedProgress)
                 }
 
+                ensureActive()
+
                 val encryptionMode = securitySettingsManager.encryptionMode.first()
                 val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
                 
                 val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
                     val encryptedFileName = "${UUID.randomUUID()}.enc"
                     val encryptedFile = File(encryptedDir, encryptedFileName)
+
+                    ensureActive()
 
                     val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile) { progress ->
                         val adjustedProgress = 0.3f + progress * 0.7f
@@ -253,6 +258,8 @@ class EncryptionService : Service() {
                     if (!encryptSuccess) {
                         throw Exception("加密失败")
                     }
+                    
+                    ensureActive()
                     
                     Pair(encryptedFile, true)
                 } else {
@@ -328,6 +335,8 @@ class EncryptionService : Service() {
                     throw Exception("加密文件不存在")
                 }
 
+                ensureActive()
+
                 ProgressManager.notifyProgress(
                     FileOperationProgress(
                         isRunning = true,
@@ -342,6 +351,8 @@ class EncryptionService : Service() {
                 val decryptedFile = File(tempDir, fileEntity.name)
 
                 if (fileEntity.isEncrypted) {
+                    ensureActive()
+                    
                     val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile) { progress ->
                         ProgressManager.notifyProgress(
                             FileOperationProgress(
@@ -357,6 +368,8 @@ class EncryptionService : Service() {
                     if (!decryptSuccess) {
                         throw Exception("解密失败")
                     }
+
+                    ensureActive()
                 } else {
                     encryptedFile.copyTo(decryptedFile, overwrite = true)
                     
@@ -370,6 +383,8 @@ class EncryptionService : Service() {
                     )
                     updateNotification("导出完成: ${fileEntity.name}", 1f)
                 }
+
+                ensureActive()
 
                 ProgressManager.notifyProgress(
                     FileOperationProgress(
@@ -431,6 +446,7 @@ class EncryptionService : Service() {
                 val buffer = ByteArray(8192)
                 var bytesRead: Int
                 while (input.read(buffer).also { bytesRead = it } != -1) {
+                    ensureActive()
                     output.write(buffer, 0, bytesRead)
                     bytesCopied += bytesRead
                     if (totalSize > 0) {
