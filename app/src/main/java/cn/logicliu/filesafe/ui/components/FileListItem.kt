@@ -274,7 +274,6 @@ private fun getFileCategory(fileName: String): String {
     return when {
         extension in FileViewModel.IMAGE_EXTENSIONS -> "图片"
         extension in FileViewModel.VIDEO_EXTENSIONS -> "视频"
-        extension in FileViewModel.DOCUMENT_EXTENSIONS -> "文档"
         else -> "其他"
     }
 }
@@ -284,7 +283,6 @@ private fun getFileIconTint(category: String): androidx.compose.ui.graphics.Colo
     return when (category) {
         "图片" -> MaterialTheme.colorScheme.primary
         "视频" -> MaterialTheme.colorScheme.secondary
-        "文档" -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 }

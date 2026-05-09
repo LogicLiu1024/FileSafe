@@ -514,20 +514,6 @@ fun HomeScreen(
                         }
                         item {
                             FilterChip(
-                                selected = selectedCategory == FileCategory.DOCUMENT,
-                                onClick = { viewModel.setCategory(FileCategory.DOCUMENT) },
-                                label = { Text("文档") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.Description,
-                                        contentDescription = null,
-                                        modifier = Modifier.height(18.dp)
-                                    )
-                                }
-                            )
-                        }
-                        item {
-                            FilterChip(
                                 selected = selectedCategory == FileCategory.OTHER,
                                 onClick = { viewModel.setCategory(FileCategory.OTHER) },
                                 label = { Text("其他") }

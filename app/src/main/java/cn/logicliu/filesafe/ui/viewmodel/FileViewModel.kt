@@ -24,7 +24,7 @@ import java.io.File
 import java.util.UUID
 
 enum class FileCategory {
-    ALL, IMAGE, VIDEO, DOCUMENT, OTHER
+    ALL, IMAGE, VIDEO, OTHER
 }
 
 enum class ViewMode {
@@ -588,10 +588,8 @@ class FileViewModel(
                     when (category) {
                         FileCategory.IMAGE -> extension in IMAGE_EXTENSIONS
                         FileCategory.VIDEO -> extension in VIDEO_EXTENSIONS
-                        FileCategory.DOCUMENT -> extension in DOCUMENT_EXTENSIONS
                         FileCategory.OTHER -> extension !in IMAGE_EXTENSIONS &&
-                                extension !in VIDEO_EXTENSIONS &&
-                                extension !in DOCUMENT_EXTENSIONS
+                                extension !in VIDEO_EXTENSIONS
                         FileCategory.ALL -> true
                     }
                 }
@@ -603,6 +601,5 @@ class FileViewModel(
     companion object {
         val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
         val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "avi", "mov", "wmv", "flv")
-        val DOCUMENT_EXTENSIONS = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt")
     }
 }
