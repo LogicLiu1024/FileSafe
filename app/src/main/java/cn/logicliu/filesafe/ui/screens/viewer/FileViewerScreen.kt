@@ -39,50 +39,45 @@ fun FileViewerScreen(
     val isImage = isImageFile(fileName)
     val isPdf = fileName.lowercase().endsWith(".pdf")
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(fileName) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                }
+    when {
+        isVideo -> {
+            VideoPlayerScreen(
+                videoUri = Uri.fromFile(file).toString(),
+                videoName = fileName,
+                onNavigateBack = onNavigateBack
             )
         }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            when {
-                isVideo -> {
-                    VideoPlayerScreen(
-                        videoUri = Uri.fromFile(file).toString(),
-                        videoName = fileName,
-                        onNavigateBack = onNavigateBack
-                    )
-                }
-                isImage -> {
-                    ImageViewerScreen(
-                        imageFile = file,
-                        onNavigateBack = onNavigateBack
-                    )
-                }
-                else -> {
-                    // 对于其他文件类型，使用系统应用打开
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("无法直接预览此文件类型，请使用系统应用打开")
-                        androidx.compose.material3.Button(
-                            onClick = { openFileWithSystemApp(context, file) },
-                            modifier = Modifier.padding(top = 16.dp)
-                        ) {
-                            Text("打开")
+        isImage -> {
+            ImageViewerScreen(
+                imageFile = file,
+                onNavigateBack = onNavigateBack
+            )
+        }
+        else -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text(fileName) },
+                        navigationIcon = {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                            }
                         }
+                    )
+                }
+            ) { paddingValues ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("无法直接预览此文件类型，请使用系统应用打开")
+                    androidx.compose.material3.Button(
+                        onClick = { openFileWithSystemApp(context, file) },
+                        modifier = Modifier.padding(top = 16.dp)
+                    ) {
+                        Text("打开")
                     }
                 }
             }
