@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -85,6 +87,8 @@ fun FileListItem(
     if (isGridView) {
         Card(
             modifier = modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
                 .combinedClickable(
                     onClick = onClick,
                     onLongClick = onLongClick
@@ -102,23 +106,28 @@ fun FileListItem(
                 null
             }
         ) {
-            Box {
-                Column(
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (isSelectionMode) {
+                    SelectionIndicator(isSelected = isSelected)
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+                Box(
                     modifier = Modifier
-                        .padding(12.dp)
+                        .weight(1f)
                         .fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    contentAlignment = Alignment.Center
                 ) {
-                    if (isSelectionMode) {
-                        SelectionIndicator(isSelected = isSelected)
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
                     if (thumbnailUri != null) {
                         AsyncImage(
                             model = thumbnailUri,
                             contentDescription = category,
                             modifier = Modifier
-                                .size(48.dp)
+                                .fillMaxSize()
                                 .clip(MaterialTheme.shapes.small),
                             contentScale = ContentScale.Crop
                         )
@@ -126,23 +135,17 @@ fun FileListItem(
                         Icon(
                             imageVector = icon,
                             contentDescription = category,
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.fillMaxSize(),
                             tint = getFileIconTint(category)
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = file.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = formatFileSize(file.size),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = formatFileSize(file.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     } else {
