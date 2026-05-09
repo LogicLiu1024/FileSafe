@@ -1,8 +1,12 @@
 package cn.logicliu.filesafe.ui.components
 
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,8 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
@@ -33,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +58,8 @@ import java.util.Locale
 fun FileListItem(
     file: FileItemEntity,
     isGridView: Boolean = false,
+    isSelected: Boolean = false,
+    isSelectionMode: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -81,44 +90,59 @@ fun FileListItem(
                     onLongClick = onLongClick
                 ),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(12.dp)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (thumbnailUri != null) {
-                    AsyncImage(
-                        model = thumbnailUri,
-                        contentDescription = category,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(MaterialTheme.shapes.small),
-                        contentScale = ContentScale.Crop
-                    )
+                containerColor = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
                 } else {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = category,
-                        modifier = Modifier.size(48.dp),
-                        tint = getFileIconTint(category)
+                    MaterialTheme.colorScheme.surfaceVariant
+                }
+            ),
+            border = if (isSelected) {
+                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+            } else {
+                null
+            }
+        ) {
+            Box {
+                Column(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (isSelectionMode) {
+                        SelectionIndicator(isSelected = isSelected)
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    if (thumbnailUri != null) {
+                        AsyncImage(
+                            model = thumbnailUri,
+                            contentDescription = category,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(MaterialTheme.shapes.small),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = category,
+                            modifier = Modifier.size(48.dp),
+                            tint = getFileIconTint(category)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = file.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = formatFileSize(file.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = file.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = formatFileSize(file.size),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     } else {
@@ -130,8 +154,17 @@ fun FileListItem(
                     onLongClick = onLongClick
                 ),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
+                containerColor = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                }
+            ),
+            border = if (isSelected) {
+                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+            } else {
+                null
+            }
         ) {
             Row(
                 modifier = Modifier
@@ -139,6 +172,10 @@ fun FileListItem(
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (isSelectionMode) {
+                    SelectionIndicator(isSelected = isSelected)
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
                 if (thumbnailUri != null) {
                     AsyncImage(
                         model = thumbnailUri,
@@ -183,6 +220,35 @@ fun FileListItem(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SelectionIndicator(isSelected: Boolean) {
+    val shape = CircleShape
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .border(
+                width = 2.dp,
+                color = if (isSelected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outline,
+                shape = shape
+            )
+            .background(
+                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = shape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isSelected) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = "已选择",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }

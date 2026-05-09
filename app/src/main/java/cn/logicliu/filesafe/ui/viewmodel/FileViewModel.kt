@@ -402,6 +402,98 @@ class FileViewModel(
         }
     }
 
+    fun batchDeleteFiles(fileIds: List<Long>, moveToTrash: Boolean = true) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            var successCount = 0
+            var failCount = 0
+            for (fileId in fileIds) {
+                val result = fileRepository.deleteFile(fileId, moveToTrash)
+                result.fold(
+                    onSuccess = { successCount++ },
+                    onFailure = { failCount++ }
+                )
+            }
+            _operationSuccess.value = when {
+                failCount == 0 -> "已${if (moveToTrash) "移到回收站" else "删除"} $successCount 个文件"
+                successCount == 0 -> "删除文件失败"
+                else -> "已处理 $successCount 个文件，$failCount 个失败"
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun batchDeleteFolders(folderIds: List<Long>, moveToTrash: Boolean = true) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            var successCount = 0
+            var failCount = 0
+            for (folderId in folderIds) {
+                val result = fileRepository.deleteFolder(folderId, moveToTrash)
+                result.fold(
+                    onSuccess = { successCount++ },
+                    onFailure = { failCount++ }
+                )
+            }
+            _operationSuccess.value = when {
+                failCount == 0 -> "已${if (moveToTrash) "移到回收站" else "删除"} $successCount 个文件夹"
+                successCount == 0 -> "删除文件夹失败"
+                else -> "已处理 $successCount 个文件夹，$failCount 个失败"
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun batchMoveFiles(fileIds: List<Long>, targetFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            var successCount = 0
+            var failCount = 0
+            for (fileId in fileIds) {
+                val result = fileRepository.moveFile(fileId, targetFolderId)
+                result.fold(
+                    onSuccess = { successCount++ },
+                    onFailure = { failCount++ }
+                )
+            }
+            _operationSuccess.value = when {
+                failCount == 0 -> "已移动 $successCount 个文件"
+                successCount == 0 -> "移动文件失败"
+                else -> "已移动 $successCount 个文件，$failCount 个失败"
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun batchMoveFolders(folderIds: List<Long>, targetFolderId: Long?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+
+            var successCount = 0
+            var failCount = 0
+            for (folderId in folderIds) {
+                val result = fileRepository.moveFolder(folderId, targetFolderId)
+                result.fold(
+                    onSuccess = { successCount++ },
+                    onFailure = { failCount++ }
+                )
+            }
+            _operationSuccess.value = when {
+                failCount == 0 -> "已移动 $successCount 个文件夹"
+                successCount == 0 -> "移动文件夹失败"
+                else -> "已移动 $successCount 个文件夹，$failCount 个失败"
+            }
+            _isLoading.value = false
+        }
+    }
+
     fun emptyTrash() {
         viewModelScope.launch {
             _isLoading.value = true
