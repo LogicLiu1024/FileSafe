@@ -2,6 +2,8 @@ package cn.logicliu.filesafe.ui.screens.viewer
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.net.Uri
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -21,8 +23,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,11 +38,11 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -67,13 +71,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import android.net.Uri
 import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.ui.screens.player.isVideoFile
 import coil.compose.rememberAsyncImagePainter
-import androidx.compose.ui.input.pointer.PointerInputScope
 import java.io.File
 import java.util.concurrent.TimeUnit
+import androidx.compose.ui.input.pointer.PointerInputScope
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -84,9 +87,7 @@ fun MediaViewerScreen(
     onDecryptFile: suspend (Long) -> Result<File>
 ) {
     val pagerState = rememberPagerState(initialPage = initialIndex) { mediaFileEntities.size }
-
     var decryptedFiles by remember { mutableStateOf<Map<Long, File>>(emptyMap()) }
-
     val currentEntity = remember(pagerState.currentPage, mediaFileEntities) {
         mediaFileEntities.getOrNull(pagerState.currentPage)
     }
@@ -125,12 +126,14 @@ fun MediaViewerScreen(
                 if (isVideoFile(entity.name)) {
                     VideoPage(
                         videoFile = decryptedFile,
-                        videoName = entity.name
+                        videoName = entity.name,
+                        onNavigateBack = onNavigateBack
                     )
                 } else {
                     ImagePage(
                         imageFile = decryptedFile,
-                        imageName = entity.name
+                        imageName = entity.name,
+                        onNavigateBack = onNavigateBack
                     )
                 }
             } else {
@@ -142,33 +145,6 @@ fun MediaViewerScreen(
                 }
             }
         }
-
-        currentEntity?.let { entity ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onNavigateBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        tint = Color.White
-                    )
-                }
-                Text(
-                    text = entity.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp)
-                )
-            }
-        }
     }
 }
 
@@ -176,7 +152,8 @@ fun MediaViewerScreen(
 @Composable
 private fun VideoPage(
     videoFile: File,
-    videoName: String
+    videoName: String,
+    onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -219,11 +196,17 @@ private fun VideoPage(
         if (showControls && isPlaying) {
             kotlinx.coroutines.delay(3000)
             showControls = false
+        } else if (!showControls) {
+            showSpeedMenu = false
         }
     }
 
     DisposableEffect(uri) {
         val originalOrientation = activity?.requestedOrientation
+        val window = activity?.window
+        val decorView = window?.decorView
+        val originalSystemUiVisibility = decorView?.systemUiVisibility ?: 0
+
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
@@ -235,10 +218,28 @@ private fun VideoPage(
         onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.release()
+            decorView?.systemUiVisibility = originalSystemUiVisibility
             if (isLandscape) {
                 activity?.requestedOrientation = originalOrientation
                     ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
+        }
+    }
+
+    LaunchedEffect(isLandscape) {
+        val window = activity?.window
+        val decorView = window?.decorView
+        if (isLandscape) {
+            decorView?.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            )
+        } else {
+            decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
     }
 
@@ -313,7 +314,7 @@ private fun VideoPage(
         }
 
         AnimatedVisibility(
-            visible = showControls && isPlaying,
+            visible = showControls,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -328,10 +329,34 @@ private fun VideoPage(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.End,
+                            .then(
+                                if (!isLandscape) {
+                                    Modifier.windowInsetsPadding(WindowInsets.systemBars)
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回",
+                                tint = Color.White
+                            )
+                        }
+
+                        Text(
+                            text = videoName,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 8.dp)
+                        )
+
                         Box {
                             IconButton(onClick = { showSpeedMenu = true }) {
                                 Icon(
@@ -492,7 +517,11 @@ private fun VideoPage(
 }
 
 @Composable
-private fun ImagePage(imageFile: File, imageName: String) {
+private fun ImagePage(
+    imageFile: File,
+    imageName: String,
+    onNavigateBack: () -> Unit
+) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
