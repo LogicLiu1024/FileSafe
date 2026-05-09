@@ -2,6 +2,7 @@ package cn.logicliu.filesafe.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.logicliu.filesafe.security.EncryptionMode
 import cn.logicliu.filesafe.security.PasswordManager
 import cn.logicliu.filesafe.security.SecurityQuestion
 import cn.logicliu.filesafe.security.SecurityQuestionManager
@@ -39,6 +40,9 @@ class AuthViewModel(
 
     val themeMode: StateFlow<ThemeMode> = securitySettingsManager.themeMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeMode.LIGHT)
+
+    val encryptionMode: StateFlow<EncryptionMode> = securitySettingsManager.encryptionMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, EncryptionMode.ENCRYPT)
 
     val isSecurityQuestionsSet: StateFlow<Boolean> = securityQuestionManager.securityQuestionsSet
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -201,6 +205,12 @@ class AuthViewModel(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             securitySettingsManager.setThemeMode(mode)
+        }
+    }
+
+    fun setEncryptionMode(mode: EncryptionMode) {
+        viewModelScope.launch {
+            securitySettingsManager.setEncryptionMode(mode)
         }
     }
 

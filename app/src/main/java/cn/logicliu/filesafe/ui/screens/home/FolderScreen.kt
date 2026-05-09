@@ -63,6 +63,7 @@ import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.data.entity.FolderEntity
 import cn.logicliu.filesafe.data.repository.FileRepository
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.SecuritySettingsManager
 import cn.logicliu.filesafe.ui.components.CreateFolderDialog
 import cn.logicliu.filesafe.ui.components.EmptyState
 import cn.logicliu.filesafe.service.ExportTempFileHolder
@@ -89,7 +90,8 @@ fun FolderScreen(
     val context = LocalContext.current
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
-    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
+    val securitySettingsManager = remember { SecuritySettingsManager(context) }
+    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager, securitySettingsManager) }
     val viewModel = remember { FileViewModel(fileRepository, context) }
     val snackbarHostState = remember { SnackbarHostState() }
 

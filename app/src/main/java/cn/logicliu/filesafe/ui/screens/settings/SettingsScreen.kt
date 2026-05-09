@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.EnhancedEncryption
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import cn.logicliu.filesafe.security.EncryptionMode
 import cn.logicliu.filesafe.security.ThemeMode
 import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
 
@@ -54,7 +56,9 @@ fun SettingsScreen(
     onNavigateToAbout: () -> Unit
 ) {
     val themeMode by authViewModel.themeMode.collectAsState()
+    val encryptionMode by authViewModel.encryptionMode.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showEncryptionDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -121,6 +125,18 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                     )
+
+                    SettingsItem(
+                        icon = Icons.Default.EnhancedEncryption,
+                        title = "加密方式",
+                        subtitle = when (encryptionMode) {
+                            EncryptionMode.HIDE -> "隐藏模式（仅重命名）"
+                            EncryptionMode.ENCRYPT -> "加密模式（AES-256）"
+                        },
+                        onClick = { showEncryptionDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                     SettingsItem(
                         icon = Icons.Default.Security,
@@ -192,6 +208,17 @@ fun SettingsScreen(
             onModeSelected = { mode ->
                 authViewModel.setThemeMode(mode)
                 showThemeDialog = false
+            }
+        )
+    }
+
+    if (showEncryptionDialog) {
+        EncryptionModeDialog(
+            currentMode = encryptionMode,
+            onDismiss = { showEncryptionDialog = false },
+            onModeSelected = { mode ->
+                authViewModel.setEncryptionMode(mode)
+                showEncryptionDialog = false
             }
         )
     }
@@ -297,5 +324,75 @@ private fun ThemeModeOption(
             text = label,
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+@Composable
+private fun EncryptionModeDialog(
+    currentMode: EncryptionMode,
+    onDismiss: () -> Unit,
+    onModeSelected: (EncryptionMode) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择加密方式") },
+        text = {
+            Column {
+                EncryptionModeOption(
+                    mode = EncryptionMode.HIDE,
+                    label = "隐藏模式",
+                    description = "仅重命名文件，不进行加密处理",
+                    isSelected = currentMode == EncryptionMode.HIDE,
+                    onClick = { onModeSelected(EncryptionMode.HIDE) }
+                )
+                
+                EncryptionModeOption(
+                    mode = EncryptionMode.ENCRYPT,
+                    label = "加密模式",
+                    description = "使用AES-256加密文件内容",
+                    isSelected = currentMode == EncryptionMode.ENCRYPT,
+                    onClick = { onModeSelected(EncryptionMode.ENCRYPT) }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
+private fun EncryptionModeOption(
+    mode: EncryptionMode,
+    label: String,
+    description: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = isSelected,
+            onClick = onClick
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }

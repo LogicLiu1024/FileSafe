@@ -59,6 +59,7 @@ import cn.logicliu.filesafe.data.FileDataStore
 import cn.logicliu.filesafe.data.entity.TrashItemEntity
 import cn.logicliu.filesafe.data.repository.FileRepository
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.SecuritySettingsManager
 import cn.logicliu.filesafe.ui.components.EmptyState
 import cn.logicliu.filesafe.ui.components.formatFileSize
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
@@ -75,7 +76,8 @@ fun TrashScreen(
     val context = LocalContext.current
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
-    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
+    val securitySettingsManager = remember { SecuritySettingsManager(context) }
+    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager, securitySettingsManager) }
     val viewModel = remember { FileViewModel(fileRepository, context) }
     val snackbarHostState = remember { SnackbarHostState() }
 

@@ -42,7 +42,8 @@ class FileSafeApplication : Application() {
         fileRepository = FileRepository(
             this,
             fileDataStore,
-            cryptoManager
+            cryptoManager,
+            securitySettingsManager
         )
     }
 

@@ -7,6 +7,8 @@ import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.data.entity.FolderEntity
 import cn.logicliu.filesafe.data.entity.TrashItemEntity
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.EncryptionMode
+import cn.logicliu.filesafe.security.SecuritySettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -18,7 +20,8 @@ import java.util.UUID
 class FileRepository(
     private val context: Context,
     private val fileDataStore: FileDataStore,
-    private val cryptoManager: CryptoManager
+    private val cryptoManager: CryptoManager,
+    private val securitySettingsManager: SecuritySettingsManager
 ) {
     private val encryptedDir: File
         get() = File(context.filesDir, ENCRYPTED_DIR).apply { mkdirs() }
@@ -61,27 +64,40 @@ class FileRepository(
                     }
                 }
 
-                val encryptedFileName = "${UUID.randomUUID()}.enc"
-                val encryptedFile = File(encryptedDir, encryptedFileName)
+                val encryptionMode = securitySettingsManager.encryptionMode.first()
+                val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
+                    val encryptedFileName = "${UUID.randomUUID()}.enc"
+                    val encryptedFile = File(encryptedDir, encryptedFileName)
 
-                val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile)
-                tempFile.delete()
+                    val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile)
+                    tempFile.delete()
 
-                if (!encryptSuccess) {
-                    return@withContext Result.failure(Exception("Encryption failed"))
+                    if (!encryptSuccess) {
+                        return@withContext Result.failure(Exception("Encryption failed"))
+                    }
+                    
+                    Pair(encryptedFile, true)
+                } else {
+                    val hiddenFileName = ".${UUID.randomUUID()}"
+                    val hiddenFile = File(encryptedDir, hiddenFileName)
+                    
+                    tempFile.copyTo(hiddenFile, overwrite = true)
+                    tempFile.delete()
+                    
+                    Pair(hiddenFile, false)
                 }
 
                 val currentTime = System.currentTimeMillis()
                 val fileEntity = FileItemEntity(
                     name = fileName,
                     path = fileName,
-                    encryptedPath = encryptedFile.absolutePath,
-                    size = encryptedFile.length(),
+                    encryptedPath = finalFile.absolutePath,
+                    size = finalFile.length(),
                     mimeType = mimeType,
                     folderId = folderId,
                     createdAt = currentTime,
                     modifiedAt = currentTime,
-                    isEncrypted = true
+                    isEncrypted = isEncrypted
                 )
 
                 val id = fileDataStore.insertFile(fileEntity)
@@ -104,10 +120,15 @@ class FileRepository(
                 }
 
                 val decryptedFile = File(tempDir, fileEntity.name)
-                val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
+                
+                if (fileEntity.isEncrypted) {
+                    val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
 
-                if (!decryptSuccess) {
-                    return@withContext Result.failure(Exception("Decryption failed"))
+                    if (!decryptSuccess) {
+                        return@withContext Result.failure(Exception("Decryption failed"))
+                    }
+                } else {
+                    encryptedFile.copyTo(decryptedFile, overwrite = true)
                 }
 
                 val uri = Uri.fromFile(decryptedFile)
@@ -130,10 +151,15 @@ class FileRepository(
                 }
 
                 val decryptedFile = File(tempDir, fileEntity.name)
-                val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
+                
+                if (fileEntity.isEncrypted) {
+                    val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
 
-                if (!decryptSuccess) {
-                    return@withContext Result.failure(Exception("Decryption failed"))
+                    if (!decryptSuccess) {
+                        return@withContext Result.failure(Exception("Decryption failed"))
+                    }
+                } else {
+                    encryptedFile.copyTo(decryptedFile, overwrite = true)
                 }
 
                 Result.success(decryptedFile)

@@ -81,6 +81,7 @@ import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.data.entity.FolderEntity
 import cn.logicliu.filesafe.data.repository.FileRepository
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.SecuritySettingsManager
 import cn.logicliu.filesafe.service.EncryptionService
 import cn.logicliu.filesafe.service.ExportTempFileHolder
 import cn.logicliu.filesafe.service.FileTaskOperation
@@ -110,7 +111,8 @@ fun HomeScreen(
     val context = LocalContext.current
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
-    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
+    val securitySettingsManager = remember { SecuritySettingsManager(context) }
+    val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager, securitySettingsManager) }
     val viewModel = remember { FileViewModel(fileRepository, context) }
     val scope = rememberCoroutineScope()
 

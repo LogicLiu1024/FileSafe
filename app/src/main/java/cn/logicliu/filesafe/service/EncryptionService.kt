@@ -13,6 +13,8 @@ import androidx.core.app.NotificationCompat
 import cn.logicliu.filesafe.MainActivity
 import cn.logicliu.filesafe.R
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.EncryptionMode
+import cn.logicliu.filesafe.security.SecuritySettingsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +62,7 @@ object ProgressManager {
 class EncryptionService : Service() {
 
     private lateinit var cryptoManager: CryptoManager
+    private lateinit var securitySettingsManager: SecuritySettingsManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentJob: Job? = null
@@ -106,6 +109,7 @@ class EncryptionService : Service() {
     override fun onCreate() {
         super.onCreate()
         cryptoManager = CryptoManager(applicationContext)
+        securitySettingsManager = SecuritySettingsManager(applicationContext)
         createNotificationChannel()
     }
 
@@ -211,7 +215,6 @@ class EncryptionService : Service() {
                 )
                 updateNotification("正在导入: $fileName", 0f)
 
-                // Step 1: Copy Uri to temp file
                 copyUriToFile(sourceUri, tempFile) { progress ->
                     val adjustedProgress = progress * 0.3f
                     ProgressManager.notifyProgress(
@@ -225,42 +228,64 @@ class EncryptionService : Service() {
                     updateNotification("正在复制文件: $fileName", adjustedProgress)
                 }
 
-                // Step 2: Encrypt the file
+                val encryptionMode = securitySettingsManager.encryptionMode.first()
                 val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
-                val encryptedFileName = "${UUID.randomUUID()}.enc"
-                val encryptedFile = File(encryptedDir, encryptedFileName)
+                
+                val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
+                    val encryptedFileName = "${UUID.randomUUID()}.enc"
+                    val encryptedFile = File(encryptedDir, encryptedFileName)
 
-                val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile) { progress ->
-                    val adjustedProgress = 0.3f + progress * 0.7f
+                    val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile) { progress ->
+                        val adjustedProgress = 0.3f + progress * 0.7f
+                        ProgressManager.notifyProgress(
+                            FileOperationProgress(
+                                isRunning = true,
+                                progress = adjustedProgress,
+                                fileName = fileName,
+                                operation = FileTaskOperation.IMPORT
+                            )
+                        )
+                        updateNotification("正在加密: $fileName", adjustedProgress)
+                    }
+
+                    tempFile.delete()
+
+                    if (!encryptSuccess) {
+                        throw Exception("加密失败")
+                    }
+                    
+                    Pair(encryptedFile, true)
+                } else {
+                    val hiddenFileName = ".${UUID.randomUUID()}"
+                    val hiddenFile = File(encryptedDir, hiddenFileName)
+                    
+                    tempFile.copyTo(hiddenFile, overwrite = true)
+                    tempFile.delete()
+                    
                     ProgressManager.notifyProgress(
                         FileOperationProgress(
                             isRunning = true,
-                            progress = adjustedProgress,
+                            progress = 1f,
                             fileName = fileName,
                             operation = FileTaskOperation.IMPORT
                         )
                     )
-                    updateNotification("正在加密: $fileName", adjustedProgress)
+                    updateNotification("导入完成: $fileName", 1f)
+                    
+                    Pair(hiddenFile, false)
                 }
 
-                tempFile.delete()
-
-                if (!encryptSuccess) {
-                    throw Exception("加密失败")
-                }
-
-                // Step 3: Save to database
                 val fileDataStore = cn.logicliu.filesafe.data.FileDataStore.getInstance(applicationContext)
                 val fileEntity = cn.logicliu.filesafe.data.entity.FileItemEntity(
                     name = fileName,
                     path = fileName,
-                    encryptedPath = encryptedFile.absolutePath,
-                    size = encryptedFile.length(),
+                    encryptedPath = finalFile.absolutePath,
+                    size = finalFile.length(),
                     mimeType = applicationContext.contentResolver.getType(sourceUri),
                     folderId = folderId,
                     createdAt = System.currentTimeMillis(),
                     modifiedAt = System.currentTimeMillis(),
-                    isEncrypted = true
+                    isEncrypted = isEncrypted
                 )
                 fileDataStore.insertFile(fileEntity)
 
@@ -313,24 +338,37 @@ class EncryptionService : Service() {
                 )
                 updateNotification("正在导出: ${fileEntity.name}", 0f)
 
-                // Decrypt to temp file
                 val tempDir = File(applicationContext.cacheDir, "temp").apply { mkdirs() }
                 val decryptedFile = File(tempDir, fileEntity.name)
 
-                val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile) { progress ->
+                if (fileEntity.isEncrypted) {
+                    val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile) { progress ->
+                        ProgressManager.notifyProgress(
+                            FileOperationProgress(
+                                isRunning = true,
+                                progress = progress,
+                                fileName = fileEntity.name,
+                                operation = FileTaskOperation.EXPORT
+                            )
+                        )
+                        updateNotification("正在解密: ${fileEntity.name}", progress)
+                    }
+
+                    if (!decryptSuccess) {
+                        throw Exception("解密失败")
+                    }
+                } else {
+                    encryptedFile.copyTo(decryptedFile, overwrite = true)
+                    
                     ProgressManager.notifyProgress(
                         FileOperationProgress(
                             isRunning = true,
-                            progress = progress,
+                            progress = 1f,
                             fileName = fileEntity.name,
                             operation = FileTaskOperation.EXPORT
                         )
                     )
-                    updateNotification("正在解密: ${fileEntity.name}", progress)
-                }
-
-                if (!decryptSuccess) {
-                    throw Exception("解密失败")
+                    updateNotification("导出完成: ${fileEntity.name}", 1f)
                 }
 
                 ProgressManager.notifyProgress(
@@ -344,7 +382,6 @@ class EncryptionService : Service() {
                 )
                 updateNotification("导出完成: ${fileEntity.name}", 1f)
 
-                // Store temp file path for UI to pick up
                 ExportTempFileHolder.tempFile = decryptedFile
 
             } catch (e: Exception) {
