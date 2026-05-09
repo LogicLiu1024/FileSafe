@@ -160,6 +160,11 @@ fun FolderScreen(
                 saveFileLauncher.launch(file.name)
             }
         }
+        if (fileOperationProgress?.operation == cn.logicliu.filesafe.service.FileTaskOperation.IMPORT && 
+            fileOperationProgress?.result != null) {
+            kotlinx.coroutines.delay(2000)
+            viewModel.clearOperationProgress()
+        }
     }
 
     val allFolders = currentFolders

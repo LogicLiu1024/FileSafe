@@ -180,6 +180,11 @@ fun HomeScreen(
                 saveFileLauncher.launch(file.name)
             }
         }
+        if (fileOperationProgress?.operation == FileTaskOperation.IMPORT && 
+            fileOperationProgress?.result != null) {
+            kotlinx.coroutines.delay(2000)
+            viewModel.clearOperationProgress()
+        }
     }
 
     val filteredContents = remember(combinedContents, selectedCategory) {
