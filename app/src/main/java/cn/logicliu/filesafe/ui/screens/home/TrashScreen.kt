@@ -76,7 +76,7 @@ fun TrashScreen(
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
     val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
-    val viewModel = remember { FileViewModel(fileRepository) }
+    val viewModel = remember { FileViewModel(fileRepository, context) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val trashItems by viewModel.trashItems.collectAsState()

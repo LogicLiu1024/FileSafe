@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Description
@@ -37,6 +38,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.outlined.FolderOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -46,6 +50,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -68,16 +73,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.logicliu.filesafe.data.FileDataStore
 import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.data.entity.FolderEntity
 import cn.logicliu.filesafe.data.repository.FileRepository
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.service.EncryptionService
+import cn.logicliu.filesafe.service.ExportTempFileHolder
+import cn.logicliu.filesafe.service.FileTaskOperation
 import cn.logicliu.filesafe.ui.components.CreateFolderDialog
 import cn.logicliu.filesafe.ui.components.EmptyState
 import cn.logicliu.filesafe.ui.components.FileListItem
-import cn.logicliu.filesafe.ui.components.FileOperation
+import cn.logicliu.filesafe.ui.components.FileOperation as UiFileOperation
 import cn.logicliu.filesafe.ui.components.FileOperationDialog
 import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.FolderOperationDialog
@@ -101,7 +110,7 @@ fun HomeScreen(
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
     val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
-    val viewModel = remember { FileViewModel(fileRepository) }
+    val viewModel = remember { FileViewModel(fileRepository, context) }
     val scope = rememberCoroutineScope()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -116,14 +125,14 @@ fun HomeScreen(
     val error by viewModel.error.collectAsState()
     val operationSuccess by viewModel.operationSuccess.collectAsState()
     val selectedFileForView by viewModel.selectedFileForView.collectAsState()
-    val exportFileUri by viewModel.exportFileUri.collectAsState()
+    val fileOperationProgress by viewModel.fileOperationProgress.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedItem by remember { mutableStateOf<Any?>(null) }
     var showFileOperationMenu by remember { mutableStateOf(false) }
     var showFolderOperationMenu by remember { mutableStateOf(false) }
-    var showOperationDialog by remember { mutableStateOf<FileOperation?>(null) }
+    var showOperationDialog by remember { mutableStateOf<UiFileOperation?>(null) }
     var targetOperationFolderId by remember { mutableStateOf<Long?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -140,9 +149,9 @@ fun HomeScreen(
         contract = ActivityResultContracts.CreateDocument("*/*")
     ) { uri ->
         uri?.let {
-            exportFileUri?.let { sourceUri ->
-                copyFile(context, sourceUri, it)
-                viewModel.clearExportFileUri()
+            ExportTempFileHolder.tempFile?.let { tempFile ->
+                copyFile(context, Uri.fromFile(tempFile), it)
+                viewModel.clearOperationProgress()
             }
         }
     }
@@ -161,10 +170,12 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(exportFileUri) {
-        exportFileUri?.let { uri ->
-            val file = File(uri.path ?: "")
-            saveFileLauncher.launch(file.name)
+    LaunchedEffect(fileOperationProgress?.result) {
+        if (fileOperationProgress?.operation == FileTaskOperation.EXPORT && 
+            fileOperationProgress?.result == cn.logicliu.filesafe.service.OperationResult.SUCCESS) {
+            ExportTempFileHolder.tempFile?.let { file ->
+                saveFileLauncher.launch(file.name)
+            }
         }
     }
 
@@ -296,6 +307,58 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
+                // File operation progress indicator
+                fileOperationProgress?.let { progress ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (progress.operation == FileTaskOperation.IMPORT) "导入文件" else "导出文件",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                if (progress.isRunning) {
+                                    IconButton(onClick = {
+                                        EncryptionService.cancelOperation(context)
+                                    }) {
+                                        Icon(Icons.Default.Cancel, contentDescription = "取消")
+                                    }
+                                }
+                            }
+                            if (progress.fileName.isNotEmpty()) {
+                                Text(
+                                    text = progress.fileName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { progress.progress },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "${(progress.progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -459,21 +522,21 @@ fun HomeScreen(
                 viewModel.viewFile((selectedItem as FileItemEntity).id)
             },
             onCopy = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = null
             },
             onMove = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = (selectedItem as FileItemEntity).id
             },
             onRename = {
-                showOperationDialog = FileOperation.RENAME
+                showOperationDialog = UiFileOperation.RENAME
             },
             onExport = {
                 viewModel.exportFile((selectedItem as FileItemEntity).id)
             },
             onDelete = {
-                showOperationDialog = FileOperation.DELETE
+                showOperationDialog = UiFileOperation.DELETE
             }
         )
     }
@@ -485,18 +548,18 @@ fun HomeScreen(
                 selectedItem = null
             },
             onCopy = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = null
             },
             onMove = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = (selectedItem as FolderEntity).id
             },
             onRename = {
-                showOperationDialog = FileOperation.RENAME
+                showOperationDialog = UiFileOperation.RENAME
             },
             onDelete = {
-                showOperationDialog = FileOperation.DELETE
+                showOperationDialog = UiFileOperation.DELETE
             }
         )
     }
@@ -516,13 +579,13 @@ fun HomeScreen(
                         },
                         onConfirm = { value ->
                             when (operation) {
-                                FileOperation.RENAME -> {
+                                UiFileOperation.RENAME -> {
                                     value?.let { viewModel.renameFile(item.id, it) }
                                 }
-                                FileOperation.DELETE -> {
+                                UiFileOperation.DELETE -> {
                                     viewModel.deleteFile(item.id)
                                 }
-                                FileOperation.MOVE -> {
+                                UiFileOperation.MOVE -> {
                                     if (targetOperationFolderId == null) {
                                         // Copy operation
                                         value?.toLongOrNull()?.let { targetId ->
@@ -559,13 +622,13 @@ fun HomeScreen(
                         },
                         onConfirm = { value ->
                             when (operation) {
-                                FileOperation.RENAME -> {
+                                UiFileOperation.RENAME -> {
                                     value?.let { viewModel.renameFolder(item.id, it) }
                                 }
-                                FileOperation.DELETE -> {
+                                UiFileOperation.DELETE -> {
                                     viewModel.deleteFolder(item.id)
                                 }
-                                FileOperation.MOVE -> {
+                                UiFileOperation.MOVE -> {
                                     if (targetOperationFolderId == null) {
                                         // Copy operation
                                         value?.toLongOrNull()?.let { targetId ->

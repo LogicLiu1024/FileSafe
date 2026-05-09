@@ -44,12 +44,12 @@ class CryptoManager(
         return keyGenerator.generateKey()
     }
 
-    fun encryptFile(inputFile: File, outputFile: File): Boolean {
+    fun encryptFile(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
         return try {
             if (inputFile.length() > LARGE_FILE_THRESHOLD) {
-                encryptFileInChunks(inputFile, outputFile)
+                encryptFileInChunks(inputFile, outputFile, progressCallback)
             } else {
-                encryptFileInOneGo(inputFile, outputFile)
+                encryptFileInOneGo(inputFile, outputFile, progressCallback)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -57,8 +57,9 @@ class CryptoManager(
         }
     }
 
-    private fun encryptFileInOneGo(inputFile: File, outputFile: File): Boolean {
+    private fun encryptFileInOneGo(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
         return try {
+            progressCallback?.invoke(0f)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
 
@@ -71,10 +72,12 @@ class CryptoManager(
                     fos.write(iv)
                     
                     val inputBytes = fis.readBytes()
+                    progressCallback?.invoke(0.5f)
                     val encryptedBytes = cipher.doFinal(inputBytes)
                     fos.write(encryptedBytes)
                 }
             }
+            progressCallback?.invoke(1f)
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -82,8 +85,12 @@ class CryptoManager(
         }
     }
 
-    private fun encryptFileInChunks(inputFile: File, outputFile: File): Boolean {
+    private fun encryptFileInChunks(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
         return try {
+            val totalSize = inputFile.length()
+            var processed = 0L
+            progressCallback?.invoke(0f)
+            
             FileInputStream(inputFile).use { fis ->
                 FileOutputStream(outputFile).use { fos ->
                     // Write header: 1 byte for isChunked (1) + 8 bytes for original file size
@@ -96,6 +103,7 @@ class CryptoManager(
 
                     while (fis.read(buffer).also { bytesRead = it } != -1) {
                         val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
+                        processed += bytesRead
 
                         // Create cipher for each chunk
                         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -111,9 +119,12 @@ class CryptoManager(
                         fos.write(iv)
                         fos.write(encryptedSizeBytes)
                         fos.write(encryptedChunk)
+                        
+                        progressCallback?.invoke(processed.toFloat() / totalSize)
                     }
                 }
             }
+            progressCallback?.invoke(1f)
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -121,16 +132,20 @@ class CryptoManager(
         }
     }
 
-    fun decryptFile(inputFile: File, outputFile: File): Boolean {
+    fun decryptFile(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
         return try {
+            progressCallback?.invoke(0f)
+            val totalSize = inputFile.length()
+            var processed = 1L // Already read 1 byte for isChunked
+            
             FileInputStream(inputFile).use { fis ->
                 // Read first byte to see if it's chunked
                 val isChunked = fis.read() == 1
                 
                 if (isChunked) {
-                    decryptFileInChunks(fis, outputFile)
+                    decryptFileInChunks(fis, outputFile, totalSize, processed, progressCallback)
                 } else {
-                    decryptFileInOneGo(fis, outputFile)
+                    decryptFileInOneGo(fis, outputFile, progressCallback)
                 }
             }
             true
@@ -140,21 +155,24 @@ class CryptoManager(
         }
     }
 
-    private fun decryptFileInOneGo(fis: FileInputStream, outputFile: File): Boolean {
+    private fun decryptFileInOneGo(fis: FileInputStream, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
         return try {
             val iv = ByteArray(12)
             fis.read(iv)
+            progressCallback?.invoke(0.3f)
 
             val cipher = Cipher.getInstance(TRANSFORMATION)
             val spec = GCMParameterSpec(128, iv)
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), spec)
 
             val encryptedBytes = fis.readBytes()
+            progressCallback?.invoke(0.7f)
             val decryptedBytes = cipher.doFinal(encryptedBytes)
 
             FileOutputStream(outputFile).use { fos ->
                 fos.write(decryptedBytes)
             }
+            progressCallback?.invoke(1f)
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -162,10 +180,18 @@ class CryptoManager(
         }
     }
 
-    private fun decryptFileInChunks(fis: FileInputStream, outputFile: File): Boolean {
+    private fun decryptFileInChunks(
+        fis: FileInputStream, 
+        outputFile: File, 
+        totalSize: Long, 
+        initialProcessed: Long,
+        progressCallback: ((Float) -> Unit)? = null
+    ): Boolean {
         return try {
+            var processed = initialProcessed
             // Skip original file size (8 bytes)
             fis.skip(8)
+            processed += 8
 
             FileOutputStream(outputFile).use { fos ->
                 val ivSizeBuffer = ByteArray(4)
@@ -175,11 +201,13 @@ class CryptoManager(
                     val ivSize = java.nio.ByteBuffer.wrap(ivSizeBuffer).int
                     val iv = ByteArray(ivSize)
                     fis.read(iv)
+                    processed += 4 + ivSize
 
                     fis.read(encryptedSizeBuffer)
                     val encryptedSize = java.nio.ByteBuffer.wrap(encryptedSizeBuffer).int
                     val encryptedChunk = ByteArray(encryptedSize)
                     fis.read(encryptedChunk)
+                    processed += 4 + encryptedSize
 
                     // Decrypt the chunk
                     val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -188,8 +216,10 @@ class CryptoManager(
                     val decryptedChunk = cipher.doFinal(encryptedChunk)
 
                     fos.write(decryptedChunk)
+                    progressCallback?.invoke(processed.toFloat() / totalSize)
                 }
             }
+            progressCallback?.invoke(1f)
             true
         } catch (e: Exception) {
             e.printStackTrace()

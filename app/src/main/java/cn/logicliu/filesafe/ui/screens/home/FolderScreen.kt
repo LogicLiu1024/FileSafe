@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,11 +24,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.FolderOff
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +39,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -60,8 +65,9 @@ import cn.logicliu.filesafe.data.repository.FileRepository
 import cn.logicliu.filesafe.security.CryptoManager
 import cn.logicliu.filesafe.ui.components.CreateFolderDialog
 import cn.logicliu.filesafe.ui.components.EmptyState
+import cn.logicliu.filesafe.service.ExportTempFileHolder
 import cn.logicliu.filesafe.ui.components.FileListItem
-import cn.logicliu.filesafe.ui.components.FileOperation
+import cn.logicliu.filesafe.ui.components.FileOperation as UiFileOperation
 import cn.logicliu.filesafe.ui.components.FileOperationDialog
 import cn.logicliu.filesafe.ui.components.FolderItem
 import cn.logicliu.filesafe.ui.components.FolderOperationDialog
@@ -84,7 +90,7 @@ fun FolderScreen(
     val fileDataStore = remember { FileDataStore.getInstance(context) }
     val cryptoManager = remember { CryptoManager(context) }
     val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager) }
-    val viewModel = remember { FileViewModel(fileRepository) }
+    val viewModel = remember { FileViewModel(fileRepository, context) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val currentFolderId by viewModel.currentFolderId.collectAsState()
@@ -96,14 +102,14 @@ fun FolderScreen(
     val error by viewModel.error.collectAsState()
     val operationSuccess by viewModel.operationSuccess.collectAsState()
     val selectedFileForView by viewModel.selectedFileForView.collectAsState()
-    val exportFileUri by viewModel.exportFileUri.collectAsState()
+    val fileOperationProgress by viewModel.fileOperationProgress.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedItem by remember { mutableStateOf<Any?>(null) }
     var showFileOperationMenu by remember { mutableStateOf(false) }
     var showFolderOperationMenu by remember { mutableStateOf(false) }
-    var showOperationDialog by remember { mutableStateOf<FileOperation?>(null) }
+    var showOperationDialog by remember { mutableStateOf<UiFileOperation?>(null) }
     var targetOperationFolderId by remember { mutableStateOf<Long?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -120,9 +126,9 @@ fun FolderScreen(
         contract = ActivityResultContracts.CreateDocument("*/*")
     ) { uri ->
         uri?.let {
-            exportFileUri?.let { sourceUri ->
-                copyFile(context, sourceUri, it)
-                viewModel.clearExportFileUri()
+            ExportTempFileHolder.tempFile?.let { sourceFile ->
+                copyFile(context, Uri.fromFile(sourceFile), it)
+                viewModel.clearOperationProgress()
             }
         }
     }
@@ -145,10 +151,12 @@ fun FolderScreen(
         }
     }
 
-    LaunchedEffect(exportFileUri) {
-        exportFileUri?.let { uri ->
-            val file = File(uri.path ?: "")
-            saveFileLauncher.launch(file.name)
+    LaunchedEffect(fileOperationProgress?.result) {
+        if (fileOperationProgress?.operation == cn.logicliu.filesafe.service.FileTaskOperation.EXPORT && 
+            fileOperationProgress?.result == cn.logicliu.filesafe.service.OperationResult.SUCCESS) {
+            ExportTempFileHolder.tempFile?.let { file ->
+                saveFileLauncher.launch(file.name)
+            }
         }
     }
 
@@ -205,7 +213,7 @@ fun FolderScreen(
                                 onClick = {
                                     showMoreMenu = false
                                     selectedItem = "folder"
-                                    showOperationDialog = FileOperation.DELETE
+                                    showOperationDialog = UiFileOperation.DELETE
                                 },
                                 leadingIcon = {
                                     Icon(Icons.Default.Delete, contentDescription = null)
@@ -234,85 +242,136 @@ fun FolderScreen(
             }
         }
     ) { paddingValues ->
-        if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else if (currentFolders.isEmpty() && currentFiles.isEmpty()) {
-            EmptyState(
-                icon = Icons.Outlined.FolderOff,
-                title = "文件夹为空",
-                subtitle = "点击右下角按钮添加文件",
-                modifier = Modifier.padding(paddingValues)
-            )
-        } else {
-            if (viewMode == ViewMode.LIST) {
-                LazyColumn(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // File operation progress indicator
+            fileOperationProgress?.let { progress ->
+                Card(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
                 ) {
-                    items(currentFolders, key = { "folder_${it.id}" }) { folder ->
-                        FolderItem(
-                            folder = folder,
-                            isGridView = false,
-                            onClick = { onNavigateToSubFolder(folder.id, folder.name) },
-                            onLongClick = {
-                                selectedItem = folder
-                                showFolderOperationMenu = true
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (progress.operation == cn.logicliu.filesafe.service.FileTaskOperation.IMPORT) "导入文件" else "导出文件",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (progress.isRunning) {
+                                IconButton(onClick = {
+                                    cn.logicliu.filesafe.service.EncryptionService.cancelOperation(context)
+                                }) {
+                                    Icon(Icons.Default.Cancel, contentDescription = "取消")
+                                }
                             }
+                        }
+                        if (progress.fileName.isNotEmpty()) {
+                            Text(
+                                text = progress.fileName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { progress.progress },
+                            modifier = Modifier.fillMaxWidth()
                         )
-                    }
-                    items(currentFiles, key = { "file_${it.id}" }) { file ->
-                        FileListItem(
-                            file = file,
-                            isGridView = false,
-                            onClick = { viewModel.viewFile(file.id) },
-                            onLongClick = {
-                                selectedItem = file
-                                showFileOperationMenu = true
-                            }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${(progress.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            }
+
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    items(currentFolders, key = { "folder_${it.id}" }) { folder ->
-                        FolderItem(
-                            folder = folder,
-                            isGridView = true,
-                            onClick = { onNavigateToSubFolder(folder.id, folder.name) },
-                            onLongClick = {
-                                selectedItem = folder
-                                showFolderOperationMenu = true
-                            }
-                        )
+                    CircularProgressIndicator()
+                }
+            } else if (currentFolders.isEmpty() && currentFiles.isEmpty()) {
+                EmptyState(
+                    icon = Icons.Outlined.FolderOff,
+                    title = "文件夹为空",
+                    subtitle = "点击右下角按钮添加文件"
+                )
+            } else {
+                if (viewMode == ViewMode.LIST) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(currentFolders, key = { "folder_${it.id}" }) { folder ->
+                            FolderItem(
+                                folder = folder,
+                                isGridView = false,
+                                onClick = { onNavigateToSubFolder(folder.id, folder.name) },
+                                onLongClick = {
+                                    selectedItem = folder
+                                    showFolderOperationMenu = true
+                                }
+                            )
+                        }
+                        items(currentFiles, key = { "file_${it.id}" }) { file ->
+                            FileListItem(
+                                file = file,
+                                isGridView = false,
+                                onClick = { viewModel.viewFile(file.id) },
+                                onLongClick = {
+                                    selectedItem = file
+                                    showFileOperationMenu = true
+                                }
+                            )
+                        }
                     }
-                    items(currentFiles, key = { "file_${it.id}" }) { file ->
-                        FileListItem(
-                            file = file,
-                            isGridView = true,
-                            onClick = { viewModel.viewFile(file.id) },
-                            onLongClick = {
-                                selectedItem = file
-                                showFileOperationMenu = true
-                            }
-                        )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(currentFolders, key = { "folder_${it.id}" }) { folder ->
+                            FolderItem(
+                                folder = folder,
+                                isGridView = true,
+                                onClick = { onNavigateToSubFolder(folder.id, folder.name) },
+                                onLongClick = {
+                                    selectedItem = folder
+                                    showFolderOperationMenu = true
+                                }
+                            )
+                        }
+                        items(currentFiles, key = { "file_${it.id}" }) { file ->
+                            FileListItem(
+                                file = file,
+                                isGridView = true,
+                                onClick = { viewModel.viewFile(file.id) },
+                                onLongClick = {
+                                    selectedItem = file
+                                    showFileOperationMenu = true
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -339,21 +398,21 @@ fun FolderScreen(
                 viewModel.viewFile((selectedItem as FileItemEntity).id)
             },
             onCopy = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = null
             },
             onMove = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = (selectedItem as FileItemEntity).id
             },
             onRename = {
-                showOperationDialog = FileOperation.RENAME
+                showOperationDialog = UiFileOperation.RENAME
             },
             onExport = {
                 viewModel.exportFile((selectedItem as FileItemEntity).id)
             },
             onDelete = {
-                showOperationDialog = FileOperation.DELETE
+                showOperationDialog = UiFileOperation.DELETE
             }
         )
     }
@@ -365,18 +424,18 @@ fun FolderScreen(
                 selectedItem = null
             },
             onCopy = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = null
             },
             onMove = {
-                showOperationDialog = FileOperation.MOVE
+                showOperationDialog = UiFileOperation.MOVE
                 targetOperationFolderId = (selectedItem as FolderEntity).id
             },
             onRename = {
-                showOperationDialog = FileOperation.RENAME
+                showOperationDialog = UiFileOperation.RENAME
             },
             onDelete = {
-                showOperationDialog = FileOperation.DELETE
+                showOperationDialog = UiFileOperation.DELETE
             }
         )
     }
@@ -396,13 +455,13 @@ fun FolderScreen(
                         },
                         onConfirm = { value ->
                             when (operation) {
-                                FileOperation.RENAME -> {
+                                UiFileOperation.RENAME -> {
                                     value?.let { viewModel.renameFile(item.id, it) }
                                 }
-                                FileOperation.DELETE -> {
+                                UiFileOperation.DELETE -> {
                                     viewModel.deleteFile(item.id)
                                 }
-                                FileOperation.MOVE -> {
+                                UiFileOperation.MOVE -> {
                                     if (targetOperationFolderId == null) {
                                         // Copy operation
                                         value?.toLongOrNull()?.let { targetId ->
@@ -439,13 +498,13 @@ fun FolderScreen(
                         },
                         onConfirm = { value ->
                             when (operation) {
-                                FileOperation.RENAME -> {
+                                UiFileOperation.RENAME -> {
                                     value?.let { viewModel.renameFolder(item.id, it) }
                                 }
-                                FileOperation.DELETE -> {
+                                UiFileOperation.DELETE -> {
                                     viewModel.deleteFolder(item.id)
                                 }
-                                FileOperation.MOVE -> {
+                                UiFileOperation.MOVE -> {
                                     if (targetOperationFolderId == null) {
                                         // Copy operation
                                         value?.toLongOrNull()?.let { targetId ->

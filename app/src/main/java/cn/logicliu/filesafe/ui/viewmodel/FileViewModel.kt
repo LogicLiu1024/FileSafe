@@ -1,5 +1,6 @@
 package cn.logicliu.filesafe.ui.viewmodel
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,6 +8,12 @@ import cn.logicliu.filesafe.data.entity.FileItemEntity
 import cn.logicliu.filesafe.data.entity.FolderEntity
 import cn.logicliu.filesafe.data.entity.TrashItemEntity
 import cn.logicliu.filesafe.data.repository.FileRepository
+import cn.logicliu.filesafe.service.EncryptionService
+import cn.logicliu.filesafe.service.ExportTempFileHolder
+import cn.logicliu.filesafe.service.FileTaskOperation
+import cn.logicliu.filesafe.service.FileOperationProgress
+import cn.logicliu.filesafe.service.OperationResult
+import cn.logicliu.filesafe.service.ProgressManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -14,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 enum class FileCategory {
     ALL, IMAGE, VIDEO, DOCUMENT, OTHER
@@ -24,7 +32,8 @@ enum class ViewMode {
 }
 
 class FileViewModel(
-    private val fileRepository: FileRepository
+    private val fileRepository: FileRepository,
+    private val context: Context
 ) : ViewModel() {
 
     private val _currentFolderId = MutableStateFlow<Long?>(null)
@@ -64,8 +73,43 @@ class FileViewModel(
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
+    private val _fileOperationProgress = MutableStateFlow<FileOperationProgress?>(null)
+    val fileOperationProgress: StateFlow<FileOperationProgress?> = _fileOperationProgress.asStateFlow()
+
     val combinedContents: StateFlow<List<Any>> = fileRepository.getCombinedContents(null)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val progressListener: (FileOperationProgress) -> Unit = { progress ->
+        _fileOperationProgress.value = progress
+        
+        when (progress.result) {
+            OperationResult.SUCCESS -> {
+                _operationSuccess.value = when (progress.operation) {
+                    FileTaskOperation.IMPORT -> "文件导入成功"
+                    FileTaskOperation.EXPORT -> "文件导出成功"
+                }
+            }
+            OperationResult.ERROR -> {
+                _error.value = when (progress.operation) {
+                    FileTaskOperation.IMPORT -> "导入失败: ${progress.errorMessage}"
+                    FileTaskOperation.EXPORT -> "导出失败: ${progress.errorMessage}"
+                }
+            }
+            OperationResult.CANCELLED -> {
+                _operationSuccess.value = "操作已取消"
+            }
+            null -> {}
+        }
+    }
+
+    init {
+        ProgressManager.addListener(progressListener)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        ProgressManager.removeListener(progressListener)
+    }
 
     fun navigateToFolder(folderId: Long, folderName: String) {
         _currentFolderId.value = folderId
@@ -106,21 +150,18 @@ class FileViewModel(
     }
 
     fun importFile(uri: Uri) {
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-
-            val result = fileRepository.importFile(uri, _currentFolderId.value)
-            result.fold(
-                onSuccess = {
-                    _operationSuccess.value = "文件导入成功"
-                },
-                onFailure = { e ->
-                    _error.value = "导入文件失败: ${e.message}"
-                }
-            )
-            _isLoading.value = false
-        }
+        _error.value = null
+        _fileOperationProgress.value = FileOperationProgress(
+            isRunning = true,
+            progress = 0f,
+            operation = FileTaskOperation.IMPORT
+        )
+        
+        // Create temp file path
+        val tempDir = File(context.cacheDir, "temp").apply { mkdirs() }
+        val tempFilePath = File(tempDir, "temp_import_${UUID.randomUUID()}").absolutePath
+        
+        EncryptionService.startImport(context, uri, tempFilePath, _currentFolderId.value)
     }
 
     fun createFolder(name: String) {
@@ -310,29 +351,19 @@ class FileViewModel(
         _selectedFileForView.value = null
     }
 
-    private val _exportFileUri = MutableStateFlow<Uri?>(null)
-    val exportFileUri: StateFlow<Uri?> = _exportFileUri.asStateFlow()
-
     fun exportFile(fileId: Long) {
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-
-            val result = fileRepository.exportFile(fileId)
-            result.fold(
-                onSuccess = { uri ->
-                    _exportFileUri.value = uri
-                },
-                onFailure = { e ->
-                    _error.value = "导出文件失败: ${e.message}"
-                }
-            )
-            _isLoading.value = false
-        }
+        _error.value = null
+        _fileOperationProgress.value = FileOperationProgress(
+            isRunning = true,
+            progress = 0f,
+            operation = FileTaskOperation.EXPORT
+        )
+        EncryptionService.startExport(context, fileId)
     }
 
-    fun clearExportFileUri() {
-        _exportFileUri.value = null
+    fun clearOperationProgress() {
+        _fileOperationProgress.value = null
+        ExportTempFileHolder.tempFile = null
     }
 
     fun restoreFromTrash(trashItemId: Long) {

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import cn.logicliu.filesafe.MainActivity
@@ -17,30 +18,43 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
+import java.util.UUID
 
-data class EncryptionProgress(
+data class FileOperationProgress(
     val isRunning: Boolean = false,
     val progress: Float = 0f,
-    val currentFile: String = "",
-    val totalFiles: Int = 0,
-    val processedFiles: Int = 0,
-    val operation: EncryptionOperation = EncryptionOperation.ENCRYPT
+    val fileName: String = "",
+    val operation: FileTaskOperation = FileTaskOperation.IMPORT,
+    val result: OperationResult? = null,
+    val errorMessage: String? = null
 )
 
-enum class EncryptionOperation {
-    ENCRYPT, DECRYPT
+enum class FileTaskOperation {
+    IMPORT, EXPORT
 }
 
-enum class EncryptionResult {
+enum class OperationResult {
     SUCCESS, ERROR, CANCELLED
+}
+
+object ProgressManager {
+    private val listeners = mutableListOf<(FileOperationProgress) -> Unit>()
+    
+    fun addListener(listener: (FileOperationProgress) -> Unit) {
+        listeners.add(listener)
+    }
+    
+    fun removeListener(listener: (FileOperationProgress) -> Unit) {
+        listeners.remove(listener)
+    }
+    
+    fun notifyProgress(progress: FileOperationProgress) {
+        listeners.forEach { it(progress) }
+    }
 }
 
 class EncryptionService : Service() {
@@ -50,40 +64,33 @@ class EncryptionService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentJob: Job? = null
 
-    private val _progress = MutableStateFlow(EncryptionProgress())
-    val progress: StateFlow<EncryptionProgress> = _progress.asStateFlow()
-
-    private val _result = MutableStateFlow<EncryptionResult?>(null)
-    val result: StateFlow<EncryptionResult?> = _result.asStateFlow()
-
     companion object {
-        const val CHANNEL_ID = "encryption_channel"
+        const val CHANNEL_ID = "file_operation_channel"
         const val NOTIFICATION_ID = 1001
 
-        const val ACTION_ENCRYPT = "cn.logicliu.filesafe.ENCRYPT"
-        const val ACTION_DECRYPT = "cn.logicliu.filesafe.DECRYPT"
+        const val ACTION_IMPORT = "cn.logicliu.filesafe.IMPORT"
+        const val ACTION_EXPORT = "cn.logicliu.filesafe.EXPORT"
         const val ACTION_CANCEL = "cn.logicliu.filesafe.CANCEL"
 
-        const val EXTRA_SOURCE_DIR = "source_dir"
-        const val EXTRA_TARGET_DIR = "target_dir"
-        const val EXTRA_PASSWORD = "password"
+        const val EXTRA_SOURCE_URI = "source_uri"
+        const val EXTRA_FILE_ID = "file_id"
+        const val EXTRA_FOLDER_ID = "folder_id"
+        const val EXTRA_TEMP_FILE_PATH = "temp_file_path"
 
-        fun startEncryption(context: Context, sourceDir: String, targetDir: String, password: String) {
+        fun startImport(context: Context, sourceUri: Uri, tempFilePath: String, folderId: Long? = null) {
             val intent = Intent(context, EncryptionService::class.java).apply {
-                action = ACTION_ENCRYPT
-                putExtra(EXTRA_SOURCE_DIR, sourceDir)
-                putExtra(EXTRA_TARGET_DIR, targetDir)
-                putExtra(EXTRA_PASSWORD, password)
+                action = ACTION_IMPORT
+                putExtra(EXTRA_SOURCE_URI, sourceUri)
+                putExtra(EXTRA_TEMP_FILE_PATH, tempFilePath)
+                folderId?.let { putExtra(EXTRA_FOLDER_ID, it) }
             }
             context.startForegroundService(intent)
         }
 
-        fun startDecryption(context: Context, sourceDir: String, targetDir: String, password: String) {
+        fun startExport(context: Context, fileId: Long) {
             val intent = Intent(context, EncryptionService::class.java).apply {
-                action = ACTION_DECRYPT
-                putExtra(EXTRA_SOURCE_DIR, sourceDir)
-                putExtra(EXTRA_TARGET_DIR, targetDir)
-                putExtra(EXTRA_PASSWORD, password)
+                action = ACTION_EXPORT
+                putExtra(EXTRA_FILE_ID, fileId)
             }
             context.startForegroundService(intent)
         }
@@ -104,25 +111,26 @@ class EncryptionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_ENCRYPT -> {
-                val sourceDir = intent.getStringExtra(EXTRA_SOURCE_DIR) ?: return START_NOT_STICKY
-                val targetDir = intent.getStringExtra(EXTRA_TARGET_DIR) ?: return START_NOT_STICKY
-                val password = intent.getStringExtra(EXTRA_PASSWORD) ?: return START_NOT_STICKY
+            ACTION_IMPORT -> {
+                val sourceUri = intent.getParcelableExtra<Uri>(EXTRA_SOURCE_URI) ?: return START_NOT_STICKY
+                val tempFilePath = intent.getStringExtra(EXTRA_TEMP_FILE_PATH) ?: return START_NOT_STICKY
+                val folderId = if (intent.hasExtra(EXTRA_FOLDER_ID)) intent.getLongExtra(EXTRA_FOLDER_ID, -1).takeIf { it != -1L } else null
 
-                startForeground(NOTIFICATION_ID, createNotification("正在加密文件...", 0f))
-                startEncryption(sourceDir, targetDir, password)
+                startForeground(NOTIFICATION_ID, createNotification("正在导入文件...", 0f))
+                startImport(sourceUri, tempFilePath, folderId)
             }
-            ACTION_DECRYPT -> {
-                val sourceDir = intent.getStringExtra(EXTRA_SOURCE_DIR) ?: return START_NOT_STICKY
-                val targetDir = intent.getStringExtra(EXTRA_TARGET_DIR) ?: return START_NOT_STICKY
-                val password = intent.getStringExtra(EXTRA_PASSWORD) ?: return START_NOT_STICKY
+            ACTION_EXPORT -> {
+                val fileId = intent.getLongExtra(EXTRA_FILE_ID, -1)
+                if (fileId == -1L) return START_NOT_STICKY
 
-                startForeground(NOTIFICATION_ID, createNotification("正在解密文件...", 0f))
-                startDecryption(sourceDir, targetDir, password)
+                startForeground(NOTIFICATION_ID, createNotification("正在导出文件...", 0f))
+                startExport(fileId)
             }
             ACTION_CANCEL -> {
                 currentJob?.cancel()
-                _result.value = EncryptionResult.CANCELLED
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(result = OperationResult.CANCELLED)
+                )
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -140,10 +148,10 @@ class EncryptionService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "文件加密服务",
+            "文件操作服务",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "显示文件加密/解密进度"
+            description = "显示文件导入/导出进度"
             setShowBadge(false)
         }
 
@@ -187,57 +195,96 @@ class EncryptionService : Service() {
         notificationManager.notify(NOTIFICATION_ID, createNotification(title, progress))
     }
 
-    private fun startEncryption(sourceDir: String, targetDir: String, password: String) {
+    private fun startImport(sourceUri: Uri, tempFilePath: String, folderId: Long?) {
         currentJob = serviceScope.launch {
             try {
-                val source = File(sourceDir)
-                val target = File(targetDir)
-
-                if (!target.exists()) {
-                    target.mkdirs()
-                }
-
-                val files = source.listFiles()?.filter { it.isFile } ?: emptyList()
-                val totalFiles = files.size
-
-                _progress.value = EncryptionProgress(
-                    isRunning = true,
-                    progress = 0f,
-                    currentFile = "",
-                    totalFiles = totalFiles,
-                    processedFiles = 0,
-                    operation = EncryptionOperation.ENCRYPT
-                )
-
-                files.forEachIndexed { index, file ->
-                    val progress = (index + 1).toFloat() / totalFiles
-                    _progress.value = _progress.value.copy(
-                        progress = progress,
-                        currentFile = file.name,
-                        processedFiles = index + 1
+                val tempFile = File(tempFilePath)
+                val fileName = getFileNameFromUri(sourceUri) ?: "file_${System.currentTimeMillis()}"
+                
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = true,
+                        progress = 0f,
+                        fileName = fileName,
+                        operation = FileTaskOperation.IMPORT
                     )
+                )
+                updateNotification("正在导入: $fileName", 0f)
 
-                    updateNotification("正在加密: ${file.name}", progress)
-
-                    val encryptedFile = File(target, "${file.name}.enc")
-                    withContext(Dispatchers.IO) {
-                        val encryptedData = cryptoManager.encryptFile(file, password)
-                        FileOutputStream(encryptedFile).use { it.write(encryptedData) }
-                    }
+                // Step 1: Copy Uri to temp file
+                copyUriToFile(sourceUri, tempFile) { progress ->
+                    val adjustedProgress = progress * 0.3f
+                    ProgressManager.notifyProgress(
+                        FileOperationProgress(
+                            isRunning = true,
+                            progress = adjustedProgress,
+                            fileName = fileName,
+                            operation = FileTaskOperation.IMPORT
+                        )
+                    )
+                    updateNotification("正在复制文件: $fileName", adjustedProgress)
                 }
 
-                _progress.value = _progress.value.copy(
-                    isRunning = false,
-                    progress = 1f
-                )
-                _result.value = EncryptionResult.SUCCESS
+                // Step 2: Encrypt the file
+                val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
+                val encryptedFileName = "${UUID.randomUUID()}.enc"
+                val encryptedFile = File(encryptedDir, encryptedFileName)
 
-                updateNotification("加密完成", 1f)
+                val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile) { progress ->
+                    val adjustedProgress = 0.3f + progress * 0.7f
+                    ProgressManager.notifyProgress(
+                        FileOperationProgress(
+                            isRunning = true,
+                            progress = adjustedProgress,
+                            fileName = fileName,
+                            operation = FileTaskOperation.IMPORT
+                        )
+                    )
+                    updateNotification("正在加密: $fileName", adjustedProgress)
+                }
+
+                tempFile.delete()
+
+                if (!encryptSuccess) {
+                    throw Exception("加密失败")
+                }
+
+                // Step 3: Save to database
+                val fileDataStore = cn.logicliu.filesafe.data.FileDataStore.getInstance(applicationContext)
+                val fileEntity = cn.logicliu.filesafe.data.entity.FileItemEntity(
+                    name = fileName,
+                    path = fileName,
+                    encryptedPath = encryptedFile.absolutePath,
+                    size = encryptedFile.length(),
+                    mimeType = applicationContext.contentResolver.getType(sourceUri),
+                    folderId = folderId,
+                    createdAt = System.currentTimeMillis(),
+                    modifiedAt = System.currentTimeMillis(),
+                    isEncrypted = true
+                )
+                fileDataStore.insertFile(fileEntity)
+
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        progress = 1f,
+                        fileName = fileName,
+                        operation = FileTaskOperation.IMPORT,
+                        result = OperationResult.SUCCESS
+                    )
+                )
+                updateNotification("导入完成: $fileName", 1f)
 
             } catch (e: Exception) {
-                _progress.value = _progress.value.copy(isRunning = false)
-                _result.value = EncryptionResult.ERROR
-                updateNotification("加密失败: ${e.message}", 0f)
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        operation = FileTaskOperation.IMPORT,
+                        result = OperationResult.ERROR,
+                        errorMessage = e.message
+                    )
+                )
+                updateNotification("导入失败: ${e.message}", 0f)
             }
 
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -245,66 +292,119 @@ class EncryptionService : Service() {
         }
     }
 
-    private fun startDecryption(sourceDir: String, targetDir: String, password: String) {
+    private fun startExport(fileId: Long) {
         currentJob = serviceScope.launch {
             try {
-                val source = File(sourceDir)
-                val target = File(targetDir)
-
-                if (!target.exists()) {
-                    target.mkdirs()
+                val fileDataStore = cn.logicliu.filesafe.data.FileDataStore.getInstance(applicationContext)
+                val fileEntity = fileDataStore.getFileById(fileId).first() ?: throw Exception("文件不存在")
+                val encryptedFile = File(fileEntity.encryptedPath)
+                
+                if (!encryptedFile.exists()) {
+                    throw Exception("加密文件不存在")
                 }
 
-                val files = source.listFiles()?.filter { 
-                    it.isFile && it.name.endsWith(".enc") 
-                } ?: emptyList()
-                val totalFiles = files.size
-
-                _progress.value = EncryptionProgress(
-                    isRunning = true,
-                    progress = 0f,
-                    currentFile = "",
-                    totalFiles = totalFiles,
-                    processedFiles = 0,
-                    operation = EncryptionOperation.DECRYPT
-                )
-
-                files.forEachIndexed { index, file ->
-                    val progress = (index + 1).toFloat() / totalFiles
-                    val originalName = file.name.removeSuffix(".enc")
-
-                    _progress.value = _progress.value.copy(
-                        progress = progress,
-                        currentFile = originalName,
-                        processedFiles = index + 1
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = true,
+                        progress = 0f,
+                        fileName = fileEntity.name,
+                        operation = FileTaskOperation.EXPORT
                     )
+                )
+                updateNotification("正在导出: ${fileEntity.name}", 0f)
 
-                    updateNotification("正在解密: $originalName", progress)
+                // Decrypt to temp file
+                val tempDir = File(applicationContext.cacheDir, "temp").apply { mkdirs() }
+                val decryptedFile = File(tempDir, fileEntity.name)
 
-                    val decryptedFile = File(target, originalName)
-                    withContext(Dispatchers.IO) {
-                        val encryptedData = FileInputStream(file).use { it.readBytes() }
-                        val decryptedData = cryptoManager.decryptFile(encryptedData, password)
-                        FileOutputStream(decryptedFile).use { it.write(decryptedData) }
-                    }
+                val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile) { progress ->
+                    ProgressManager.notifyProgress(
+                        FileOperationProgress(
+                            isRunning = true,
+                            progress = progress,
+                            fileName = fileEntity.name,
+                            operation = FileTaskOperation.EXPORT
+                        )
+                    )
+                    updateNotification("正在解密: ${fileEntity.name}", progress)
                 }
 
-                _progress.value = _progress.value.copy(
-                    isRunning = false,
-                    progress = 1f
-                )
-                _result.value = EncryptionResult.SUCCESS
+                if (!decryptSuccess) {
+                    throw Exception("解密失败")
+                }
 
-                updateNotification("解密完成", 1f)
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        progress = 1f,
+                        fileName = fileEntity.name,
+                        operation = FileTaskOperation.EXPORT,
+                        result = OperationResult.SUCCESS
+                    )
+                )
+                updateNotification("导出完成: ${fileEntity.name}", 1f)
+
+                // Store temp file path for UI to pick up
+                ExportTempFileHolder.tempFile = decryptedFile
 
             } catch (e: Exception) {
-                _progress.value = _progress.value.copy(isRunning = false)
-                _result.value = EncryptionResult.ERROR
-                updateNotification("解密失败: ${e.message}", 0f)
+                ProgressManager.notifyProgress(
+                    FileOperationProgress(
+                        isRunning = false,
+                        operation = FileTaskOperation.EXPORT,
+                        result = OperationResult.ERROR,
+                        errorMessage = e.message
+                    )
+                )
+                updateNotification("导出失败: ${e.message}", 0f)
             }
 
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
+
+    private fun getFileNameFromUri(uri: Uri): String? {
+        var fileName: String? = null
+        when (uri.scheme) {
+            "content" -> {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) {
+                            fileName = cursor.getString(nameIndex)
+                        }
+                    }
+                }
+            }
+            "file" -> {
+                fileName = uri.lastPathSegment
+            }
+        }
+        return fileName
+    }
+
+    private suspend fun copyUriToFile(uri: Uri, targetFile: File, progressCallback: (Float) -> Unit) = withContext(Dispatchers.IO) {
+        val inputStream = contentResolver.openInputStream(uri) ?: return@withContext
+        val totalSize = contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+        var bytesCopied = 0L
+
+        inputStream.use { input ->
+            targetFile.outputStream().use { output ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                    bytesCopied += bytesRead
+                    if (totalSize > 0) {
+                        progressCallback(bytesCopied.toFloat() / totalSize)
+                    }
+                }
+            }
+        }
+    }
+}
+
+object ExportTempFileHolder {
+    var tempFile: File? = null
 }
