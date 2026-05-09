@@ -52,6 +52,15 @@ class SecuritySettingsManager(
         }
     }
 
+    val encryptionAlgorithm: Flow<EncryptionAlgorithmType> = dataStore.data.map { preferences ->
+        val algorithmString = preferences[ENCRYPTION_ALGORITHM_KEY] ?: EncryptionAlgorithmType.AES_256_GCM.name
+        try {
+            EncryptionAlgorithmType.valueOf(algorithmString)
+        } catch (e: IllegalArgumentException) {
+            EncryptionAlgorithmType.AES_256_GCM
+        }
+    }
+
     suspend fun setAutoLockTime(timeMillis: Long) {
         dataStore.edit { preferences ->
             preferences[AUTO_LOCK_TIME_KEY] = timeMillis
@@ -88,6 +97,12 @@ class SecuritySettingsManager(
         }
     }
 
+    suspend fun setEncryptionAlgorithm(algorithm: EncryptionAlgorithmType) {
+        dataStore.edit { preferences ->
+            preferences[ENCRYPTION_ALGORITHM_KEY] = algorithm.name
+        }
+    }
+
     companion object {
         private val AUTO_LOCK_TIME_KEY = longPreferencesKey("auto_lock_time")
         private val SCREENSHOT_ENABLED_KEY = booleanPreferencesKey("screenshot_enabled")
@@ -95,6 +110,7 @@ class SecuritySettingsManager(
         private val SCREEN_OFF_LOCK_ENABLED_KEY = booleanPreferencesKey("screen_off_lock_enabled")
         private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         private val ENCRYPTION_MODE_KEY = stringPreferencesKey("encryption_mode")
+        private val ENCRYPTION_ALGORITHM_KEY = stringPreferencesKey("encryption_algorithm")
         
         const val DEFAULT_AUTO_LOCK_TIME = 5 * 60 * 1000L // 5分钟
         val AUTO_LOCK_OPTIONS = listOf(
@@ -117,4 +133,9 @@ enum class ThemeMode {
 enum class EncryptionMode {
     HIDE,
     ENCRYPT
+}
+
+enum class EncryptionAlgorithmType {
+    AES_256_GCM,
+    XCHACHA20_POLY1305
 }

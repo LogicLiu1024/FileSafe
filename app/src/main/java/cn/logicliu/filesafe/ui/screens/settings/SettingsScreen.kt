@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import cn.logicliu.filesafe.security.EncryptionAlgorithmType
 import cn.logicliu.filesafe.security.EncryptionMode
 import cn.logicliu.filesafe.security.ThemeMode
 import cn.logicliu.filesafe.ui.viewmodel.AuthViewModel
@@ -57,6 +58,7 @@ fun SettingsScreen(
 ) {
     val themeMode by authViewModel.themeMode.collectAsState()
     val encryptionMode by authViewModel.encryptionMode.collectAsState()
+    val encryptionAlgorithm by authViewModel.encryptionAlgorithm.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
     var showEncryptionDialog by remember { mutableStateOf(false) }
 
@@ -131,7 +133,10 @@ fun SettingsScreen(
                         title = "加密方式",
                         subtitle = when (encryptionMode) {
                             EncryptionMode.HIDE -> "隐藏模式（仅重命名）"
-                            EncryptionMode.ENCRYPT -> "加密模式（AES-256）"
+                            EncryptionMode.ENCRYPT -> when (encryptionAlgorithm) {
+                                EncryptionAlgorithmType.AES_256_GCM -> "加密模式（AES-256-GCM）"
+                                EncryptionAlgorithmType.XCHACHA20_POLY1305 -> "加密模式（XChaCha20-Poly1305）"
+                            }
                         },
                         onClick = { showEncryptionDialog = true }
                     )
@@ -215,9 +220,13 @@ fun SettingsScreen(
     if (showEncryptionDialog) {
         EncryptionModeDialog(
             currentMode = encryptionMode,
+            currentAlgorithm = encryptionAlgorithm,
             onDismiss = { showEncryptionDialog = false },
-            onModeSelected = { mode ->
+            onModeSelected = { mode, algorithm ->
                 authViewModel.setEncryptionMode(mode)
+                if (mode == EncryptionMode.ENCRYPT && algorithm != null) {
+                    authViewModel.setEncryptionAlgorithm(algorithm)
+                }
                 showEncryptionDialog = false
             }
         )
@@ -330,28 +339,86 @@ private fun ThemeModeOption(
 @Composable
 private fun EncryptionModeDialog(
     currentMode: EncryptionMode,
+    currentAlgorithm: EncryptionAlgorithmType,
     onDismiss: () -> Unit,
-    onModeSelected: (EncryptionMode) -> Unit
+    onModeSelected: (EncryptionMode, EncryptionAlgorithmType?) -> Unit
 ) {
+    var selectedMode by remember { mutableStateOf(currentMode) }
+    var selectedAlgorithm by remember { mutableStateOf(currentAlgorithm) }
+    
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择加密方式") },
         text = {
             Column {
-                EncryptionModeOption(
-                    mode = EncryptionMode.HIDE,
-                    label = "隐藏模式",
-                    description = "仅重命名文件，不进行加密处理",
-                    isSelected = currentMode == EncryptionMode.HIDE,
-                    onClick = { onModeSelected(EncryptionMode.HIDE) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { 
+                            selectedMode = EncryptionMode.HIDE
+                            onModeSelected(EncryptionMode.HIDE, null)
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedMode == EncryptionMode.HIDE,
+                        onClick = { 
+                            selectedMode = EncryptionMode.HIDE
+                            onModeSelected(EncryptionMode.HIDE, null)
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "隐藏模式",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "仅重命名文件，不进行加密处理",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                
+                Text(
+                    text = "加密模式",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(vertical = 8.dp)
                 )
                 
-                EncryptionModeOption(
-                    mode = EncryptionMode.ENCRYPT,
-                    label = "加密模式",
-                    description = "使用AES-256加密文件内容",
-                    isSelected = currentMode == EncryptionMode.ENCRYPT,
-                    onClick = { onModeSelected(EncryptionMode.ENCRYPT) }
+                Text(
+                    text = "使用加密算法保护文件内容",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                EncryptionAlgorithmOption(
+                    algorithm = EncryptionAlgorithmType.AES_256_GCM,
+                    selectedAlgorithm = selectedAlgorithm,
+                    label = "AES-256-GCM",
+                    description = "标准加密算法，兼容性最好",
+                    onClick = {
+                        selectedAlgorithm = EncryptionAlgorithmType.AES_256_GCM
+                        selectedMode = EncryptionMode.ENCRYPT
+                        onModeSelected(EncryptionMode.ENCRYPT, EncryptionAlgorithmType.AES_256_GCM)
+                    }
+                )
+                
+                EncryptionAlgorithmOption(
+                    algorithm = EncryptionAlgorithmType.XCHACHA20_POLY1305,
+                    selectedAlgorithm = selectedAlgorithm,
+                    label = "XChaCha20-Poly1305",
+                    description = "高性能加密算法，适合大文件",
+                    onClick = {
+                        selectedAlgorithm = EncryptionAlgorithmType.XCHACHA20_POLY1305
+                        selectedMode = EncryptionMode.ENCRYPT
+                        onModeSelected(EncryptionMode.ENCRYPT, EncryptionAlgorithmType.XCHACHA20_POLY1305)
+                    }
                 )
             }
         },
@@ -364,22 +431,22 @@ private fun EncryptionModeDialog(
 }
 
 @Composable
-private fun EncryptionModeOption(
-    mode: EncryptionMode,
+private fun EncryptionAlgorithmOption(
+    algorithm: EncryptionAlgorithmType,
+    selectedAlgorithm: EncryptionAlgorithmType,
     label: String,
     description: String,
-    isSelected: Boolean,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(
-            selected = isSelected,
+            selected = selectedAlgorithm == algorithm,
             onClick = onClick
         )
         Spacer(modifier = Modifier.width(8.dp))

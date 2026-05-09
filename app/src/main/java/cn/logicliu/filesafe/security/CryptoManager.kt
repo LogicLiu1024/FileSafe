@@ -3,36 +3,56 @@ package cn.logicliu.filesafe.security
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import org.bouncycastle.crypto.modes.ChaCha20Poly1305
+import org.bouncycastle.crypto.params.AEADParameters
+import org.bouncycastle.crypto.params.KeyParameter
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Security
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+
+enum class EncryptionAlgorithm {
+    AES_256_GCM,
+    XCHACHA20_POLY1305
+}
 
 class CryptoManager(
     private val context: Context
 ) {
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-
-    private fun getOrCreateKey(): SecretKey {
-        val existingKey = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-        return existingKey?.secretKey ?: createKey()
+    
+    init {
+        Security.addProvider(BouncyCastleProvider())
     }
 
-    private fun createKey(): SecretKey {
+    private fun getOrCreateAESKey(): SecretKey {
+        val existingKey = keyStore.getEntry(KEY_ALIAS_AES, null) as? KeyStore.SecretKeyEntry
+        return existingKey?.secretKey ?: createAESKey()
+    }
+
+    private fun createAESKey(): SecretKey {
         val keyGenerator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES,
             ANDROID_KEYSTORE
         )
         val keyGenSpec = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
+            KEY_ALIAS_AES,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -44,12 +64,90 @@ class CryptoManager(
         return keyGenerator.generateKey()
     }
 
-    fun encryptFile(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
+    private fun generateXChaCha20Key(): SecretKey {
+        val keyBytes = ByteArray(32)
+        SecureRandom().nextBytes(keyBytes)
+        return SecretKeySpec(keyBytes, "ChaCha20")
+    }
+
+    private fun hChaCha20Subkey(key: ByteArray, nonce16: ByteArray): ByteArray {
+        val state = IntArray(16)
+        state[0] = 0x61707865
+        state[1] = 0x3320646e
+        state[2] = 0x79622d32
+        state[3] = 0x6b206574
+        for (i in 0..7) {
+            state[4 + i] = ((key[i * 4].toInt() and 0xFF)
+                or ((key[i * 4 + 1].toInt() and 0xFF) shl 8)
+                or ((key[i * 4 + 2].toInt() and 0xFF) shl 16)
+                or ((key[i * 4 + 3].toInt() and 0xFF) shl 24))
+        }
+        for (i in 0..3) {
+            state[12 + i] = ((nonce16[i * 4].toInt() and 0xFF)
+                or ((nonce16[i * 4 + 1].toInt() and 0xFF) shl 8)
+                or ((nonce16[i * 4 + 2].toInt() and 0xFF) shl 16)
+                or ((nonce16[i * 4 + 3].toInt() and 0xFF) shl 24))
+        }
+
+        val x = state.copyOf()
+        for (i in 0 until 10) {
+            quarterRound(x, 0, 4, 8, 12)
+            quarterRound(x, 1, 5, 9, 13)
+            quarterRound(x, 2, 6, 10, 14)
+            quarterRound(x, 3, 7, 11, 15)
+            quarterRound(x, 0, 5, 10, 15)
+            quarterRound(x, 1, 6, 11, 12)
+            quarterRound(x, 2, 7, 8, 13)
+            quarterRound(x, 3, 4, 9, 14)
+        }
+        for (i in 0..15) {
+            x[i] += state[i]
+        }
+
+        val subkey = ByteArray(32)
+        for (i in 0..3) {
+            val v0 = x[i]
+            subkey[i * 4] = (v0 and 0xFF).toByte()
+            subkey[i * 4 + 1] = ((v0 ushr 8) and 0xFF).toByte()
+            subkey[i * 4 + 2] = ((v0 ushr 16) and 0xFF).toByte()
+            subkey[i * 4 + 3] = ((v0 ushr 24) and 0xFF).toByte()
+            val v12 = x[12 + i]
+            subkey[16 + i * 4] = (v12 and 0xFF).toByte()
+            subkey[16 + i * 4 + 1] = ((v12 ushr 8) and 0xFF).toByte()
+            subkey[16 + i * 4 + 2] = ((v12 ushr 16) and 0xFF).toByte()
+            subkey[16 + i * 4 + 3] = ((v12 ushr 24) and 0xFF).toByte()
+        }
+        return subkey
+    }
+
+    private fun quarterRound(state: IntArray, a: Int, b: Int, c: Int, d: Int) {
+        state[a] += state[b]
+        state[d] = (state[d] xor state[a]) shl 16 or ((state[d] xor state[a]) ushr 16)
+        state[c] += state[d]
+        state[b] = (state[b] xor state[c]) shl 12 or ((state[b] xor state[c]) ushr 20)
+        state[a] += state[b]
+        state[d] = (state[d] xor state[a]) shl 8 or ((state[d] xor state[a]) ushr 24)
+        state[c] += state[d]
+        state[b] = (state[b] xor state[c]) shl 7 or ((state[b] xor state[c]) ushr 25)
+    }
+
+    private fun toInternalNonce(nonce24: ByteArray): ByteArray {
+        val internalNonce = ByteArray(12)
+        System.arraycopy(nonce24, 16, internalNonce, 4, 8)
+        return internalNonce
+    }
+
+    fun encryptFile(
+        inputFile: File,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm = EncryptionAlgorithm.AES_256_GCM,
+        progressCallback: ((Float) -> Unit)? = null
+    ): Boolean {
         return try {
             if (inputFile.length() > LARGE_FILE_THRESHOLD) {
-                encryptFileInChunks(inputFile, outputFile, progressCallback)
+                encryptFileInChunks(inputFile, outputFile, algorithm, progressCallback)
             } else {
-                encryptFileInOneGo(inputFile, outputFile, progressCallback)
+                encryptFileInOneGo(inputFile, outputFile, algorithm, progressCallback)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -57,26 +155,61 @@ class CryptoManager(
         }
     }
 
-    private fun encryptFileInOneGo(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
+    private fun encryptFileInOneGo(
+        inputFile: File,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm,
+        progressCallback: ((Float) -> Unit)?
+    ): Boolean {
         return try {
             progressCallback?.invoke(0f)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+            
+            when (algorithm) {
+                EncryptionAlgorithm.AES_256_GCM -> {
+                    val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                    cipher.init(Cipher.ENCRYPT_MODE, getOrCreateAESKey())
+                    val iv = cipher.iv
 
-            val iv = cipher.iv
-            FileInputStream(inputFile).use { fis ->
-                FileOutputStream(outputFile).use { fos ->
-                    // Write header: 1 byte for isChunked (0)
-                    fos.write(0)
-                    // Write IV
-                    fos.write(iv)
-                    
-                    val inputBytes = fis.readBytes()
-                    progressCallback?.invoke(0.5f)
-                    val encryptedBytes = cipher.doFinal(inputBytes)
-                    fos.write(encryptedBytes)
+                    FileInputStream(inputFile).use { fis ->
+                        FileOutputStream(outputFile).use { fos ->
+                            fos.write(ALGORITHM_MARKER_AES)
+                            fos.write(0)
+                            fos.write(iv)
+                            
+                            val inputBytes = fis.readBytes()
+                            progressCallback?.invoke(0.5f)
+                            val encryptedBytes = cipher.doFinal(inputBytes)
+                            fos.write(encryptedBytes)
+                        }
+                    }
+                }
+                EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                    val key = generateXChaCha20Key()
+                    val nonce = ByteArray(24).apply { SecureRandom().nextBytes(this) }
+                    val subkey = hChaCha20Subkey(key.encoded, nonce.copyOfRange(0, 16))
+                    val internalNonce = toInternalNonce(nonce)
+
+                    val cipher = ChaCha20Poly1305()
+                    cipher.init(true, AEADParameters(KeyParameter(subkey), 128, internalNonce))
+
+                    FileInputStream(inputFile).use { fis ->
+                        FileOutputStream(outputFile).use { fos ->
+                            fos.write(ALGORITHM_MARKER_XCHACHA)
+                            fos.write(0)
+                            fos.write(nonce)
+                            fos.write(key.encoded)
+
+                            val inputBytes = fis.readBytes()
+                            progressCallback?.invoke(0.5f)
+                            val encryptedBytes = ByteArray(cipher.getOutputSize(inputBytes.size))
+                            val len = cipher.processBytes(inputBytes, 0, inputBytes.size, encryptedBytes, 0)
+                            cipher.doFinal(encryptedBytes, len)
+                            fos.write(encryptedBytes)
+                        }
+                    }
                 }
             }
+            
             progressCallback?.invoke(1f)
             true
         } catch (e: Exception) {
@@ -85,7 +218,12 @@ class CryptoManager(
         }
     }
 
-    private fun encryptFileInChunks(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
+    private fun encryptFileInChunks(
+        inputFile: File,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm,
+        progressCallback: ((Float) -> Unit)?
+    ): Boolean {
         return try {
             val totalSize = inputFile.length()
             var processed = 0L
@@ -93,34 +231,72 @@ class CryptoManager(
             
             FileInputStream(inputFile).use { fis ->
                 FileOutputStream(outputFile).use { fos ->
-                    // Write header: 1 byte for isChunked (1) + 8 bytes for original file size
-                    fos.write(1)
-                    val originalSizeBytes = java.nio.ByteBuffer.allocate(8).putLong(inputFile.length()).array()
-                    fos.write(originalSizeBytes)
+                    when (algorithm) {
+                        EncryptionAlgorithm.AES_256_GCM -> {
+                            fos.write(ALGORITHM_MARKER_AES)
+                            fos.write(1)
+                            val originalSizeBytes = ByteBuffer.allocate(8).putLong(inputFile.length()).array()
+                            fos.write(originalSizeBytes)
 
-                    var bytesRead: Int
-                    val buffer = ByteArray(CHUNK_SIZE)
+                            var bytesRead: Int
+                            val buffer = ByteArray(CHUNK_SIZE)
 
-                    while (fis.read(buffer).also { bytesRead = it } != -1) {
-                        val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
-                        processed += bytesRead
+                            while (fis.read(buffer).also { bytesRead = it } != -1) {
+                                val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
+                                processed += bytesRead
 
-                        // Create cipher for each chunk
-                        val cipher = Cipher.getInstance(TRANSFORMATION)
-                        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-                        val iv = cipher.iv
-                        val encryptedChunk = cipher.doFinal(chunkData)
+                                val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateAESKey())
+                                val iv = cipher.iv
+                                val encryptedChunk = cipher.doFinal(chunkData)
 
-                        // Write chunk: 4 bytes for iv size, iv, 4 bytes for encrypted data size, encrypted data
-                        val ivSizeBytes = java.nio.ByteBuffer.allocate(4).putInt(iv.size).array()
-                        val encryptedSizeBytes = java.nio.ByteBuffer.allocate(4).putInt(encryptedChunk.size).array()
+                                val ivSizeBytes = ByteBuffer.allocate(4).putInt(iv.size).array()
+                                val encryptedSizeBytes = ByteBuffer.allocate(4).putInt(encryptedChunk.size).array()
 
-                        fos.write(ivSizeBytes)
-                        fos.write(iv)
-                        fos.write(encryptedSizeBytes)
-                        fos.write(encryptedChunk)
-                        
-                        progressCallback?.invoke(processed.toFloat() / totalSize)
+                                fos.write(ivSizeBytes)
+                                fos.write(iv)
+                                fos.write(encryptedSizeBytes)
+                                fos.write(encryptedChunk)
+                                
+                                progressCallback?.invoke(processed.toFloat() / totalSize)
+                            }
+                        }
+                        EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                            val key = generateXChaCha20Key()
+                            fos.write(ALGORITHM_MARKER_XCHACHA)
+                            fos.write(1)
+                            val originalSizeBytes = ByteBuffer.allocate(8).putLong(inputFile.length()).array()
+                            fos.write(originalSizeBytes)
+                            fos.write(key.encoded)
+
+                            var bytesRead: Int
+                            val buffer = ByteArray(CHUNK_SIZE)
+
+                            while (fis.read(buffer).also { bytesRead = it } != -1) {
+                                val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
+                                processed += bytesRead
+
+                                val nonce = ByteArray(24).apply { SecureRandom().nextBytes(this) }
+                                val subkey = hChaCha20Subkey(key.encoded, nonce.copyOfRange(0, 16))
+                                val internalNonce = toInternalNonce(nonce)
+
+                                val cipher = ChaCha20Poly1305()
+                                cipher.init(true, AEADParameters(KeyParameter(subkey), 128, internalNonce))
+                                val encryptedChunk = ByteArray(cipher.getOutputSize(chunkData.size))
+                                val len = cipher.processBytes(chunkData, 0, chunkData.size, encryptedChunk, 0)
+                                cipher.doFinal(encryptedChunk, len)
+
+                                val nonceSizeBytes = ByteBuffer.allocate(4).putInt(nonce.size).array()
+                                val encryptedSizeBytes = ByteBuffer.allocate(4).putInt(encryptedChunk.size).array()
+
+                                fos.write(nonceSizeBytes)
+                                fos.write(nonce)
+                                fos.write(encryptedSizeBytes)
+                                fos.write(encryptedChunk)
+
+                                progressCallback?.invoke(processed.toFloat() / totalSize)
+                            }
+                        }
                     }
                 }
             }
@@ -132,20 +308,129 @@ class CryptoManager(
         }
     }
 
-    fun decryptFile(inputFile: File, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
+    suspend fun encryptFileParallel(
+        inputFile: File,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm = EncryptionAlgorithm.AES_256_GCM,
+        progressCallback: ((Float) -> Unit)? = null
+    ): Boolean {
         return try {
-            progressCallback?.invoke(0f)
+            if (inputFile.length() <= LARGE_FILE_THRESHOLD) {
+                return encryptFile(inputFile, outputFile, algorithm, progressCallback)
+            }
+
             val totalSize = inputFile.length()
-            var processed = 1L // Already read 1 byte for isChunked
+            val chunks = mutableListOf<ByteArray>()
+            val chunkMetadata = mutableListOf<ChunkMeta>()
             
             FileInputStream(inputFile).use { fis ->
-                // Read first byte to see if it's chunked
+                var bytesRead: Int
+                val buffer = ByteArray(CHUNK_SIZE)
+                var offset = 0L
+                
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
+                    chunks.add(chunkData)
+                    chunkMetadata.add(ChunkMeta(offset, bytesRead))
+                    offset += bytesRead
+                }
+            }
+
+            progressCallback?.invoke(0.1f)
+
+            val encryptedChunks = coroutineScope {
+                chunks.mapIndexed { index, chunkData ->
+                    async(Dispatchers.Default) {
+                        when (algorithm) {
+                            EncryptionAlgorithm.AES_256_GCM -> {
+                                val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateAESKey())
+                                val iv = cipher.iv
+                                val encrypted = cipher.doFinal(chunkData)
+                                EncryptedChunk(iv, encrypted, index)
+                            }
+                            EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                                val key = generateXChaCha20Key()
+                                val nonce = ByteArray(24).apply { SecureRandom().nextBytes(this) }
+                                val subkey = hChaCha20Subkey(key.encoded, nonce.copyOfRange(0, 16))
+                                val internalNonce = toInternalNonce(nonce)
+
+                                val cipher = ChaCha20Poly1305()
+                                cipher.init(true, AEADParameters(KeyParameter(subkey), 128, internalNonce))
+                                val encrypted = ByteArray(cipher.getOutputSize(chunkData.size))
+                                val len = cipher.processBytes(chunkData, 0, chunkData.size, encrypted, 0)
+                                cipher.doFinal(encrypted, len)
+                                EncryptedChunk(nonce, encrypted, index, key.encoded)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            progressCallback?.invoke(0.8f)
+
+            FileOutputStream(outputFile).use { fos ->
+                when (algorithm) {
+                    EncryptionAlgorithm.AES_256_GCM -> {
+                        fos.write(ALGORITHM_MARKER_AES)
+                        fos.write(1)
+                        fos.write(ByteBuffer.allocate(8).putLong(inputFile.length()).array())
+                    }
+                    EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                        fos.write(ALGORITHM_MARKER_XCHACHA)
+                        fos.write(1)
+                        fos.write(ByteBuffer.allocate(8).putLong(inputFile.length()).array())
+                    }
+                }
+
+                encryptedChunks.sortedBy { it.index }.forEach { chunk ->
+                    val ivSizeBytes = ByteBuffer.allocate(4).putInt(chunk.iv.size).array()
+                    val encryptedSizeBytes = ByteBuffer.allocate(4).putInt(chunk.encryptedData.size).array()
+
+                    fos.write(ivSizeBytes)
+                    fos.write(chunk.iv)
+                    fos.write(encryptedSizeBytes)
+                    fos.write(chunk.encryptedData)
+                    
+                    if (chunk.key != null) {
+                        fos.write(chunk.key)
+                    }
+                }
+            }
+
+            progressCallback?.invoke(1f)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun decryptFile(
+        inputFile: File,
+        outputFile: File,
+        progressCallback: ((Float) -> Unit)? = null
+    ): Boolean {
+        return try {
+            progressCallback?.invoke(0f)
+            
+            FileInputStream(inputFile).use { fis ->
+                val algorithmMarker = fis.read()
                 val isChunked = fis.read() == 1
                 
+                val algorithm = when (algorithmMarker) {
+                    ALGORITHM_MARKER_XCHACHA -> EncryptionAlgorithm.XCHACHA20_POLY1305
+                    ALGORITHM_MARKER_AES -> EncryptionAlgorithm.AES_256_GCM
+                    else -> {
+                        fis.close()
+                        return decryptLegacyFile(inputFile, outputFile, progressCallback)
+                    }
+                }
+                
                 if (isChunked) {
-                    decryptFileInChunks(fis, outputFile, totalSize, processed, progressCallback)
+                    decryptFileInChunks(fis, outputFile, algorithm, progressCallback)
                 } else {
-                    decryptFileInOneGo(fis, outputFile, progressCallback)
+                    decryptFileInOneGo(fis, outputFile, algorithm, progressCallback)
                 }
             }
             true
@@ -155,22 +440,54 @@ class CryptoManager(
         }
     }
 
-    private fun decryptFileInOneGo(fis: FileInputStream, outputFile: File, progressCallback: ((Float) -> Unit)? = null): Boolean {
+    private fun decryptFileInOneGo(
+        fis: FileInputStream,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm,
+        progressCallback: ((Float) -> Unit)?
+    ): Boolean {
         return try {
-            val iv = ByteArray(12)
-            fis.read(iv)
-            progressCallback?.invoke(0.3f)
+            when (algorithm) {
+                EncryptionAlgorithm.AES_256_GCM -> {
+                    val iv = ByteArray(12)
+                    fis.read(iv)
+                    progressCallback?.invoke(0.3f)
 
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            val spec = GCMParameterSpec(128, iv)
-            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), spec)
+                    val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                    val spec = GCMParameterSpec(128, iv)
+                    cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
 
-            val encryptedBytes = fis.readBytes()
-            progressCallback?.invoke(0.7f)
-            val decryptedBytes = cipher.doFinal(encryptedBytes)
+                    val encryptedBytes = fis.readBytes()
+                    progressCallback?.invoke(0.7f)
+                    val decryptedBytes = cipher.doFinal(encryptedBytes)
 
-            FileOutputStream(outputFile).use { fos ->
-                fos.write(decryptedBytes)
+                    FileOutputStream(outputFile).use { fos ->
+                        fos.write(decryptedBytes)
+                    }
+                }
+                EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                    val nonce = ByteArray(24)
+                    fis.read(nonce)
+                    val keyBytes = ByteArray(32)
+                    fis.read(keyBytes)
+                    progressCallback?.invoke(0.3f)
+
+                    val subkey = hChaCha20Subkey(keyBytes, nonce.copyOfRange(0, 16))
+                    val internalNonce = toInternalNonce(nonce)
+
+                    val cipher = ChaCha20Poly1305()
+                    cipher.init(false, AEADParameters(KeyParameter(subkey), 128, internalNonce))
+
+                    val encryptedBytes = fis.readBytes()
+                    progressCallback?.invoke(0.7f)
+                    val decryptedBytes = ByteArray(cipher.getOutputSize(encryptedBytes.size))
+                    val len = cipher.processBytes(encryptedBytes, 0, encryptedBytes.size, decryptedBytes, 0)
+                    cipher.doFinal(decryptedBytes, len)
+
+                    FileOutputStream(outputFile).use { fos ->
+                        fos.write(decryptedBytes, 0, len)
+                    }
+                }
             }
             progressCallback?.invoke(1f)
             true
@@ -181,42 +498,132 @@ class CryptoManager(
     }
 
     private fun decryptFileInChunks(
-        fis: FileInputStream, 
-        outputFile: File, 
-        totalSize: Long, 
-        initialProcessed: Long,
-        progressCallback: ((Float) -> Unit)? = null
+        fis: FileInputStream,
+        outputFile: File,
+        algorithm: EncryptionAlgorithm,
+        progressCallback: ((Float) -> Unit)?
     ): Boolean {
         return try {
-            var processed = initialProcessed
-            // Skip original file size (8 bytes)
             fis.skip(8)
-            processed += 8
 
             FileOutputStream(outputFile).use { fos ->
                 val ivSizeBuffer = ByteArray(4)
                 val encryptedSizeBuffer = ByteArray(4)
 
-                while (fis.read(ivSizeBuffer) != -1) {
-                    val ivSize = java.nio.ByteBuffer.wrap(ivSizeBuffer).int
-                    val iv = ByteArray(ivSize)
+                when (algorithm) {
+                    EncryptionAlgorithm.AES_256_GCM -> {
+                        while (fis.read(ivSizeBuffer) != -1) {
+                            val ivSize = ByteBuffer.wrap(ivSizeBuffer).int
+                            val iv = ByteArray(ivSize)
+                            fis.read(iv)
+
+                            fis.read(encryptedSizeBuffer)
+                            val encryptedSize = ByteBuffer.wrap(encryptedSizeBuffer).int
+                            val encryptedChunk = ByteArray(encryptedSize)
+                            fis.read(encryptedChunk)
+
+                            val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                            val spec = GCMParameterSpec(128, iv)
+                            cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
+                            val decryptedChunk = cipher.doFinal(encryptedChunk)
+
+                            fos.write(decryptedChunk)
+                        }
+                    }
+                    EncryptionAlgorithm.XCHACHA20_POLY1305 -> {
+                        val keyBytes = ByteArray(32)
+                        fis.read(keyBytes)
+
+                        while (fis.read(ivSizeBuffer) != -1) {
+                            val nonceSize = ByteBuffer.wrap(ivSizeBuffer).int
+                            val nonce = ByteArray(nonceSize)
+                            fis.read(nonce)
+
+                            fis.read(encryptedSizeBuffer)
+                            val encryptedSize = ByteBuffer.wrap(encryptedSizeBuffer).int
+                            val encryptedChunk = ByteArray(encryptedSize)
+                            fis.read(encryptedChunk)
+
+                            val subkey = hChaCha20Subkey(keyBytes, nonce.copyOfRange(0, 16))
+                            val internalNonce = toInternalNonce(nonce)
+
+                            val cipher = ChaCha20Poly1305()
+                            cipher.init(false, AEADParameters(KeyParameter(subkey), 128, internalNonce))
+                            val decryptedChunk = ByteArray(cipher.getOutputSize(encryptedChunk.size))
+                            val len = cipher.processBytes(encryptedChunk, 0, encryptedChunk.size, decryptedChunk, 0)
+                            cipher.doFinal(decryptedChunk, len)
+
+                            fos.write(decryptedChunk, 0, len)
+                        }
+                    }
+                }
+            }
+            progressCallback?.invoke(1f)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    private fun decryptLegacyFile(
+        inputFile: File,
+        outputFile: File,
+        progressCallback: ((Float) -> Unit)?
+    ): Boolean {
+        return try {
+            progressCallback?.invoke(0f)
+            val totalSize = inputFile.length()
+            var processed = 1L
+            
+            FileInputStream(inputFile).use { fis ->
+                val isChunked = fis.read() == 1
+                
+                if (isChunked) {
+                    processed += 8
+                    fis.skip(8)
+
+                    FileOutputStream(outputFile).use { fos ->
+                        val ivSizeBuffer = ByteArray(4)
+                        val encryptedSizeBuffer = ByteArray(4)
+
+                        while (fis.read(ivSizeBuffer) != -1) {
+                            val ivSize = ByteBuffer.wrap(ivSizeBuffer).int
+                            val iv = ByteArray(ivSize)
+                            fis.read(iv)
+                            processed += 4 + ivSize
+
+                            fis.read(encryptedSizeBuffer)
+                            val encryptedSize = ByteBuffer.wrap(encryptedSizeBuffer).int
+                            val encryptedChunk = ByteArray(encryptedSize)
+                            fis.read(encryptedChunk)
+                            processed += 4 + encryptedSize
+
+                            val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+                            val spec = GCMParameterSpec(128, iv)
+                            cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
+                            val decryptedChunk = cipher.doFinal(encryptedChunk)
+
+                            fos.write(decryptedChunk)
+                            progressCallback?.invoke(processed.toFloat() / totalSize)
+                        }
+                    }
+                } else {
+                    val iv = ByteArray(12)
                     fis.read(iv)
-                    processed += 4 + ivSize
+                    progressCallback?.invoke(0.3f)
 
-                    fis.read(encryptedSizeBuffer)
-                    val encryptedSize = java.nio.ByteBuffer.wrap(encryptedSizeBuffer).int
-                    val encryptedChunk = ByteArray(encryptedSize)
-                    fis.read(encryptedChunk)
-                    processed += 4 + encryptedSize
-
-                    // Decrypt the chunk
-                    val cipher = Cipher.getInstance(TRANSFORMATION)
+                    val cipher = Cipher.getInstance(AES_TRANSFORMATION)
                     val spec = GCMParameterSpec(128, iv)
-                    cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), spec)
-                    val decryptedChunk = cipher.doFinal(encryptedChunk)
+                    cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
 
-                    fos.write(decryptedChunk)
-                    progressCallback?.invoke(processed.toFloat() / totalSize)
+                    val encryptedBytes = fis.readBytes()
+                    progressCallback?.invoke(0.7f)
+                    val decryptedBytes = cipher.doFinal(encryptedBytes)
+
+                    FileOutputStream(outputFile).use { fos ->
+                        fos.write(decryptedBytes)
+                    }
                 }
             }
             progressCallback?.invoke(1f)
@@ -230,7 +637,7 @@ class CryptoManager(
     fun encryptFile(inputFile: File, password: String): ByteArray {
         val salt = ByteArray(16).apply { SecureRandom().nextBytes(this) }
         val key = deriveKeyFromPassword(password, salt)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key)
 
         val iv = cipher.iv
@@ -246,7 +653,7 @@ class CryptoManager(
         val data = encryptedData.copyOfRange(28, encryptedData.size)
 
         val key = deriveKeyFromPassword(password, salt)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         val spec = GCMParameterSpec(128, iv)
         cipher.init(Cipher.DECRYPT_MODE, key, spec)
 
@@ -261,8 +668,8 @@ class CryptoManager(
     }
 
     fun encryptBytes(data: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateAESKey())
         val iv = cipher.iv
         val encryptedData = cipher.doFinal(data)
         return iv + encryptedData
@@ -272,9 +679,9 @@ class CryptoManager(
         val iv = encryptedData.copyOfRange(0, 12)
         val data = encryptedData.copyOfRange(12, encryptedData.size)
 
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         val spec = GCMParameterSpec(128, iv)
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), spec)
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateAESKey(), spec)
         return cipher.doFinal(data)
     }
 
@@ -285,16 +692,27 @@ class CryptoManager(
         return android.util.Base64.encodeToString(key.encoded, android.util.Base64.NO_WRAP)
     }
 
+    private data class ChunkMeta(val offset: Long, val size: Int)
+    private data class EncryptedChunk(
+        val iv: ByteArray,
+        val encryptedData: ByteArray,
+        val index: Int,
+        val key: ByteArray? = null
+    )
+
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val KEY_ALIAS = "FileSafeKey"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
+        private const val KEY_ALIAS_AES = "FileSafeKey_AES"
+        private const val AES_TRANSFORMATION = "AES/GCM/NoPadding"
         private const val KEY_ALGORITHM = "AES"
         private const val PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA256"
-        private const val PBKDF2_ITERATIONS = 65536
+        private const val PBKDF2_ITERATIONS = 10000
         private const val KEY_SIZE = 256
         
-        private const val CHUNK_SIZE = 4 * 1024 * 1024 // 4MB per chunk
-        private const val LARGE_FILE_THRESHOLD = 10 * 1024 * 1024 // 10MB
+        private const val CHUNK_SIZE = 8 * 1024 * 1024
+        private const val LARGE_FILE_THRESHOLD = 10 * 1024 * 1024
+        
+        private const val ALGORITHM_MARKER_AES = 0x01
+        private const val ALGORITHM_MARKER_XCHACHA = 0x02
     }
 }

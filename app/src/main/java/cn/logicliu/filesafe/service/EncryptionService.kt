@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import cn.logicliu.filesafe.MainActivity
 import cn.logicliu.filesafe.R
 import cn.logicliu.filesafe.security.CryptoManager
+import cn.logicliu.filesafe.security.EncryptionAlgorithmType
 import cn.logicliu.filesafe.security.EncryptionMode
 import cn.logicliu.filesafe.security.SecuritySettingsManager
 import kotlinx.coroutines.CoroutineScope
@@ -219,6 +220,7 @@ class EncryptionService : Service() {
                 updateNotification("正在导入: $fileName", 0f)
 
                 val encryptionMode = securitySettingsManager.encryptionMode.first()
+                val encryptionAlgorithm = securitySettingsManager.encryptionAlgorithm.first()
                 val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
                 
                 val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
@@ -244,7 +246,12 @@ class EncryptionService : Service() {
 
                     ensureActive()
 
-                    val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile) { progress ->
+                    val algorithm = when (encryptionAlgorithm) {
+                        EncryptionAlgorithmType.AES_256_GCM -> cn.logicliu.filesafe.security.EncryptionAlgorithm.AES_256_GCM
+                        EncryptionAlgorithmType.XCHACHA20_POLY1305 -> cn.logicliu.filesafe.security.EncryptionAlgorithm.XCHACHA20_POLY1305
+                    }
+
+                    val encryptSuccess = cryptoManager.encryptFile(tempFile, encryptedFile, algorithm) { progress ->
                         val adjustedProgress = 0.3f + progress * 0.7f
                         ProgressManager.notifyProgress(
                             FileOperationProgress(
