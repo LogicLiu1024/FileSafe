@@ -1,5 +1,7 @@
 package cn.logicliu.filesafe.ui.screens.player
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -9,10 +11,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,15 +24,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -52,7 +51,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -76,11 +74,13 @@ fun VideoPlayerScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
     var isPlaying by remember { mutableStateOf(true) }
     var currentPosition by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(0f) }
-    var isFullscreen by remember { mutableStateOf(true) }
+    var isLandscape by remember { mutableStateOf(true) }
     var showControls by remember { mutableStateOf(true) }
+    var isSeeking by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
@@ -99,7 +99,9 @@ fun VideoPlayerScreen(
     LaunchedEffect(exoPlayer) {
         while (true) {
             delay(500)
-            currentPosition = exoPlayer.currentPosition.toFloat()
+            if (!isSeeking) {
+                currentPosition = exoPlayer.currentPosition.toFloat()
+            }
             duration = exoPlayer.duration.coerceAtLeast(0).toFloat()
             isPlaying = exoPlayer.isPlaying
         }
@@ -110,6 +112,9 @@ fun VideoPlayerScreen(
     }
 
     DisposableEffect(Unit) {
+        val originalOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
@@ -121,11 +126,13 @@ fun VideoPlayerScreen(
         onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.release()
+            activity?.requestedOrientation = originalOrientation
+                ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
     LaunchedEffect(showControls) {
-        if (showControls && isPlaying) {
+        if (showControls) {
             delay(3000)
             showControls = false
         }
@@ -139,6 +146,14 @@ fun VideoPlayerScreen(
                 detectTapGestures(
                     onTap = {
                         showControls = !showControls
+                    },
+                    onDoubleTap = {
+                        showControls = true
+                        if (isPlaying) {
+                            exoPlayer.pause()
+                        } else {
+                            exoPlayer.play()
+                        }
                     }
                 )
             }
@@ -252,10 +267,17 @@ fun VideoPlayerScreen(
                             }
                         }
 
-                        IconButton(onClick = { isFullscreen = !isFullscreen }) {
+                        IconButton(onClick = {
+                            if (isLandscape) {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            } else {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                            }
+                            isLandscape = !isLandscape
+                        }) {
                             Icon(
-                                imageVector = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                contentDescription = if (isFullscreen) "退出全屏" else "全屏",
+                                imageVector = Icons.Default.ScreenRotation,
+                                contentDescription = if (isLandscape) "切换为竖屏" else "切换为横屏",
                                 tint = Color.White
                             )
                         }
@@ -266,24 +288,25 @@ fun VideoPlayerScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.Center,
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
                             onClick = {
                                 val newPosition = (currentPosition - 10000f).coerceAtLeast(0f)
                                 exoPlayer.seekTo(newPosition.toLong())
+                                showControls = true
                             },
                             modifier = Modifier
                                 .size(48.dp)
                                 .background(Color.White.copy(alpha = 0.3f), CircleShape)
                         ) {
                             Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "暂停" else "播放",
+                                imageVector = Icons.Default.FastRewind,
+                                contentDescription = "后退10秒",
                                 tint = Color.White,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(28.dp)
                             )
                         }
 
@@ -294,6 +317,7 @@ fun VideoPlayerScreen(
                                 } else {
                                     exoPlayer.play()
                                 }
+                                showControls = true
                             }
                         ) {
                             Icon(
@@ -308,16 +332,17 @@ fun VideoPlayerScreen(
                             onClick = {
                                 val newPosition = (currentPosition + 10000).coerceAtMost(duration)
                                 exoPlayer.seekTo(newPosition.toLong())
+                                showControls = true
                             },
                             modifier = Modifier
                                 .size(48.dp)
                                 .background(Color.White.copy(alpha = 0.3f), CircleShape)
                         ) {
                             Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "暂停" else "播放",
+                                imageVector = Icons.Default.FastForward,
+                                contentDescription = "快进10秒",
                                 tint = Color.White,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(28.dp)
                             )
                         }
                     }
@@ -330,7 +355,12 @@ fun VideoPlayerScreen(
                         Slider(
                             value = currentPosition,
                             onValueChange = { newValue ->
+                                isSeeking = true
+                                currentPosition = newValue
                                 exoPlayer.seekTo(newValue.toLong())
+                            },
+                            onValueChangeFinished = {
+                                isSeeking = false
                             },
                             valueRange = 0f..duration.coerceAtLeast(1f),
                             colors = SliderDefaults.colors(
