@@ -166,13 +166,15 @@ class MainActivity : FragmentActivity() {
     // 检查是否需要自动锁定
     private fun checkAutoLock() {
         val autoLockMillis = authViewModel.autoLockTime.value
-        if (autoLockMillis > 0) { // 0表示立即锁定
+        if (autoLockMillis == -1L) {
+            return
+        }
+        if (autoLockMillis > 0) {
             val timeSinceLastActive = System.currentTimeMillis() - lastActiveTime
             if (timeSinceLastActive >= autoLockMillis) {
                 authViewModel.lockApp()
             }
         } else if (authViewModel.isUnlocked.value) {
-            // 设置为立即锁定时，回到前台立即锁定
             authViewModel.lockApp()
         }
     }
