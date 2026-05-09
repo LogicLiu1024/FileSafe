@@ -80,6 +80,9 @@ class EncryptionService : Service() {
         const val EXTRA_FILE_ID = "file_id"
         const val EXTRA_FOLDER_ID = "folder_id"
         const val EXTRA_TEMP_FILE_PATH = "temp_file_path"
+        
+        private const val BUFFER_SIZE = 128 * 1024
+        private const val PROGRESS_UPDATE_INTERVAL = 150L
 
         fun startImport(context: Context, sourceUri: Uri, tempFilePath: String, folderId: Long? = null) {
             val intent = Intent(context, EncryptionService::class.java).apply {
@@ -203,7 +206,6 @@ class EncryptionService : Service() {
     private fun startImport(sourceUri: Uri, tempFilePath: String, folderId: Long?) {
         currentJob = serviceScope.launch {
             try {
-                val tempFile = File(tempFilePath)
                 val fileName = getFileNameFromUri(sourceUri) ?: "file_${System.currentTimeMillis()}"
                 
                 ProgressManager.notifyProgress(
@@ -216,25 +218,27 @@ class EncryptionService : Service() {
                 )
                 updateNotification("正在导入: $fileName", 0f)
 
-                copyUriToFile(sourceUri, tempFile) { progress ->
-                    val adjustedProgress = progress * 0.3f
-                    ProgressManager.notifyProgress(
-                        FileOperationProgress(
-                            isRunning = true,
-                            progress = adjustedProgress,
-                            fileName = fileName,
-                            operation = FileTaskOperation.IMPORT
-                        )
-                    )
-                    updateNotification("正在复制文件: $fileName", adjustedProgress)
-                }
-
-                ensureActive()
-
                 val encryptionMode = securitySettingsManager.encryptionMode.first()
                 val encryptedDir = File(applicationContext.filesDir, "encrypted_files").apply { mkdirs() }
                 
                 val (finalFile, isEncrypted) = if (encryptionMode == EncryptionMode.ENCRYPT) {
+                    val tempFile = File(tempFilePath)
+                    
+                    copyUriToFile(sourceUri, tempFile) { progress ->
+                        val adjustedProgress = progress * 0.3f
+                        ProgressManager.notifyProgress(
+                            FileOperationProgress(
+                                isRunning = true,
+                                progress = adjustedProgress,
+                                fileName = fileName,
+                                operation = FileTaskOperation.IMPORT
+                            )
+                        )
+                        updateNotification("正在复制文件: $fileName", adjustedProgress)
+                    }
+
+                    ensureActive()
+
                     val encryptedFileName = "${UUID.randomUUID()}.enc"
                     val encryptedFile = File(encryptedDir, encryptedFileName)
 
@@ -266,8 +270,19 @@ class EncryptionService : Service() {
                     val hiddenFileName = ".${UUID.randomUUID()}"
                     val hiddenFile = File(encryptedDir, hiddenFileName)
                     
-                    tempFile.copyTo(hiddenFile, overwrite = true)
-                    tempFile.delete()
+                    copyUriToFile(sourceUri, hiddenFile) { progress ->
+                        ProgressManager.notifyProgress(
+                            FileOperationProgress(
+                                isRunning = true,
+                                progress = progress,
+                                fileName = fileName,
+                                operation = FileTaskOperation.IMPORT
+                            )
+                        )
+                        updateNotification("正在导入: $fileName", progress)
+                    }
+                    
+                    ensureActive()
                     
                     ProgressManager.notifyProgress(
                         FileOperationProgress(
@@ -440,18 +455,28 @@ class EncryptionService : Service() {
         val inputStream = contentResolver.openInputStream(uri) ?: return@withContext
         val totalSize = contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
         var bytesCopied = 0L
+        var lastProgressUpdate = 0L
 
         inputStream.use { input ->
-            targetFile.outputStream().use { output ->
-                val buffer = ByteArray(8192)
+            java.io.BufferedOutputStream(targetFile.outputStream(), BUFFER_SIZE).use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
                 var bytesRead: Int
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     ensureActive()
                     output.write(buffer, 0, bytesRead)
                     bytesCopied += bytesRead
+                    
                     if (totalSize > 0) {
-                        progressCallback(bytesCopied.toFloat() / totalSize)
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
+                            progressCallback(bytesCopied.toFloat() / totalSize)
+                            lastProgressUpdate = currentTime
+                        }
                     }
+                }
+                
+                if (totalSize > 0 && bytesCopied >= totalSize) {
+                    progressCallback(1f)
                 }
             }
         }
