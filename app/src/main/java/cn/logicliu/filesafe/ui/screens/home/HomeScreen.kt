@@ -27,6 +27,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoFile
@@ -48,8 +48,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -140,7 +138,6 @@ fun HomeScreen(
     val fileOperationProgress by viewModel.fileOperationProgress.collectAsState()
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
-    var showMoreMenu by remember { mutableStateOf(false) }
 
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
     var selectedFolderIds by remember { mutableStateOf(setOf<Long>()) }
@@ -332,25 +329,8 @@ fun HomeScreen(
                                     contentDescription = "切换视图"
                                 )
                             }
-                            Box {
-                                IconButton(onClick = { showMoreMenu = true }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "更多")
-                                }
-                                DropdownMenu(
-                                    expanded = showMoreMenu,
-                                    onDismissRequest = { showMoreMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("新建文件夹") },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            showCreateFolderDialog = true
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Add, contentDescription = null)
-                                        }
-                                    )
-                                }
+                            IconButton(onClick = { showCreateFolderDialog = true }) {
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = "新建文件夹")
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(

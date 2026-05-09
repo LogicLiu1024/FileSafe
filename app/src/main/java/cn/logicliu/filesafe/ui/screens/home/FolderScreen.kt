@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
@@ -249,6 +250,9 @@ fun FolderScreen(
                                 contentDescription = "切换视图"
                             )
                         }
+                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                            Icon(Icons.Default.CreateNewFolder, contentDescription = "新建文件夹")
+                        }
                         Box {
                             IconButton(onClick = { showMoreMenu = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "更多")
@@ -257,16 +261,6 @@ fun FolderScreen(
                                 expanded = showMoreMenu,
                                 onDismissRequest = { showMoreMenu = false }
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text("新建文件夹") },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showCreateFolderDialog = true
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Add, contentDescription = null)
-                                    }
-                                )
                                 DropdownMenuItem(
                                     text = { Text("删除文件夹") },
                                     onClick = {
