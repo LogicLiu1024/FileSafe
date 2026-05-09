@@ -316,7 +316,19 @@ class EncryptionService : Service() {
                     modifiedAt = System.currentTimeMillis(),
                     isEncrypted = isEncrypted
                 )
-                fileDataStore.insertFile(fileEntity)
+                val savedId = fileDataStore.insertFile(fileEntity)
+
+                if (ThumbnailManager.isThumbnailSupported(fileName)) {
+                    if (isEncrypted) {
+                        ThumbnailManager.generateFromEncryptedFile(
+                            applicationContext, cryptoManager, finalFile, savedId, fileEntity.mimeType
+                        )
+                    } else {
+                        ThumbnailManager.generateFromPlainFile(
+                            applicationContext, finalFile, savedId, fileEntity.mimeType
+                        )
+                    }
+                }
 
                 ProgressManager.notifyProgress(
                     FileOperationProgress(

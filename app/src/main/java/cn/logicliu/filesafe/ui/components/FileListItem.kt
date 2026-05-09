@@ -1,5 +1,6 @@
 package cn.logicliu.filesafe.ui.components
 
+import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
@@ -24,13 +25,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.logicliu.filesafe.data.entity.FileItemEntity
+import cn.logicliu.filesafe.service.ThumbnailManager
 import cn.logicliu.filesafe.ui.viewmodel.FileViewModel
+import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -44,9 +55,23 @@ fun FileListItem(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    val context = LocalContext.current
+    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     val icon = getFileIcon(file.name)
     val category = getFileCategory(file.name)
+    val supportsThumbnail = ThumbnailManager.isThumbnailSupported(file.name)
+    var thumbnailUri by remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(file.id) {
+        if (supportsThumbnail) {
+            if (!ThumbnailManager.hasThumbnail(context, file.id)) {
+                ThumbnailManager.ensureThumbnail(context, file)
+            }
+            if (ThumbnailManager.hasThumbnail(context, file.id)) {
+                thumbnailUri = Uri.fromFile(ThumbnailManager.getThumbnailFile(context, file.id))
+            }
+        }
+    }
 
     if (isGridView) {
         Card(
@@ -65,12 +90,23 @@ fun FileListItem(
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = category,
-                    modifier = Modifier.size(48.dp),
-                    tint = getFileIconTint(category)
-                )
+                if (thumbnailUri != null) {
+                    AsyncImage(
+                        model = thumbnailUri,
+                        contentDescription = category,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(MaterialTheme.shapes.small),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = category,
+                        modifier = Modifier.size(48.dp),
+                        tint = getFileIconTint(category)
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = file.name,
@@ -103,12 +139,23 @@ fun FileListItem(
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = category,
-                    modifier = Modifier.size(40.dp),
-                    tint = getFileIconTint(category)
-                )
+                if (thumbnailUri != null) {
+                    AsyncImage(
+                        model = thumbnailUri,
+                        contentDescription = category,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(MaterialTheme.shapes.small),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = category,
+                        modifier = Modifier.size(40.dp),
+                        tint = getFileIconTint(category)
+                    )
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

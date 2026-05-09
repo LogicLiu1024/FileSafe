@@ -9,6 +9,7 @@ import cn.logicliu.filesafe.data.entity.TrashItemEntity
 import cn.logicliu.filesafe.security.CryptoManager
 import cn.logicliu.filesafe.security.EncryptionMode
 import cn.logicliu.filesafe.security.SecuritySettingsManager
+import cn.logicliu.filesafe.service.ThumbnailManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -101,7 +102,21 @@ class FileRepository(
                 )
 
                 val id = fileDataStore.insertFile(fileEntity)
-                Result.success(fileEntity.copy(id = id))
+                val savedEntity = fileEntity.copy(id = id)
+
+                if (ThumbnailManager.isThumbnailSupported(fileName)) {
+                    if (isEncrypted) {
+                        ThumbnailManager.generateFromEncryptedFile(
+                            context, cryptoManager, finalFile, id, mimeType
+                        )
+                    } else {
+                        ThumbnailManager.generateFromPlainFile(
+                            context, finalFile, id, mimeType
+                        )
+                    }
+                }
+
+                Result.success(savedEntity)
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -198,7 +213,23 @@ class FileRepository(
                 )
 
                 val id = fileDataStore.insertFile(newFileEntity)
-                Result.success(newFileEntity.copy(id = id))
+                val savedEntity = newFileEntity.copy(id = id)
+
+                if (ThumbnailManager.isThumbnailSupported(originalFile.name)) {
+                    val originalThumb = ThumbnailManager.getThumbnailFile(context, fileId)
+                    if (originalThumb.exists()) {
+                        originalThumb.copyTo(
+                            ThumbnailManager.getThumbnailFile(context, id),
+                            overwrite = true
+                        )
+                    } else {
+                        ThumbnailManager.generateFromEncryptedFile(
+                            context, cryptoManager, newEncryptedFile, id, originalFile.mimeType
+                        )
+                    }
+                }
+
+                Result.success(savedEntity)
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -315,6 +346,8 @@ class FileRepository(
             try {
                 val fileEntity = fileDataStore.getFileById(fileId).first()
                     ?: return@withContext Result.failure(Exception("File not found"))
+
+                ThumbnailManager.deleteThumbnail(context, fileId)
 
                 if (moveToTrash) {
                     val trashItem = TrashItemEntity(
@@ -444,7 +477,19 @@ class FileRepository(
                         modifiedAt = System.currentTimeMillis(),
                         isEncrypted = true
                     )
-                    fileDataStore.insertFile(fileEntity)
+                    val newFileId = fileDataStore.insertFile(fileEntity)
+
+                    if (ThumbnailManager.isThumbnailSupported(trashItem.originalName)) {
+                        try {
+                            val encryptedFile = File(trashItem.encryptedPath)
+                            if (encryptedFile.exists()) {
+                                ThumbnailManager.generateFromEncryptedFile(
+                                    context, cryptoManager, encryptedFile,
+                                    newFileId, trashItem.mimeType
+                                )
+                            }
+                        } catch (_: Exception) { }
+                    }
                 } else {
                     val folderEntity = FolderEntity(
                         name = trashItem.originalName,
