@@ -380,6 +380,16 @@ class FileRepository(
                 val folderEntity = fileDataStore.getFolderById(folderId).first()
                     ?: return@withContext Result.failure(Exception("Folder not found"))
 
+                val filesInFolder = fileDataStore.getFilesByFolder(folderId).first()
+                filesInFolder.forEach { file ->
+                    ThumbnailManager.deleteThumbnail(context, file.id)
+                }
+
+                val subfolders = fileDataStore.getFoldersByParent(folderId).first()
+                subfolders.forEach { subfolder ->
+                    deleteFolderInternal(subfolder.id, moveToTrash)
+                }
+
                 if (moveToTrash) {
                     val trashItem = TrashItemEntity(
                         originalName = folderEntity.name,
@@ -402,6 +412,26 @@ class FileRepository(
             } catch (e: Exception) {
                 Result.failure(e)
             }
+        }
+    }
+
+    private suspend fun deleteFolderInternal(folderId: Long, moveToTrash: Boolean) {
+        val filesInFolder = fileDataStore.getFilesByFolder(folderId).first()
+        filesInFolder.forEach { file ->
+            ThumbnailManager.deleteThumbnail(context, file.id)
+        }
+
+        val subfolders = fileDataStore.getFoldersByParent(folderId).first()
+        subfolders.forEach { subfolder ->
+            deleteFolderInternal(subfolder.id, moveToTrash)
+        }
+
+        val folderEntity = fileDataStore.getFolderById(folderId).first()
+        if (folderEntity != null) {
+            if (!moveToTrash) {
+                File(folderEntity.encryptedPath).deleteRecursively()
+            }
+            fileDataStore.deleteFolderById(folderId)
         }
     }
 
@@ -595,8 +625,63 @@ class FileRepository(
         return fileName
     }
 
+    suspend fun cleanOrphanedFiles(): Result<OrphanedFilesInfo> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val validFiles = fileDataStore.files.first()
+                val validFileIds = validFiles.map { it.id }.toSet()
+                val validEncryptedPaths = validFiles.map { it.encryptedPath }.toSet()
+
+                var cleanedEncrypted = 0
+                var cleanedEncryptedSize = 0L
+                val encryptedDir = File(context.filesDir, ENCRYPTED_DIR)
+                if (encryptedDir.exists()) {
+                    encryptedDir.walkTopDown().forEach { file ->
+                        if (file.isFile && file.absolutePath !in validEncryptedPaths) {
+                            cleanedEncryptedSize += file.length()
+                            file.delete()
+                            cleanedEncrypted++
+                        }
+                    }
+                }
+
+                var cleanedThumbnails = 0
+                var cleanedThumbnailsSize = 0L
+                val thumbnailDir = File(context.filesDir, ThumbnailManager.THUMBNAIL_DIR)
+                if (thumbnailDir.exists()) {
+                    thumbnailDir.listFiles()?.forEach { file ->
+                        if (file.isFile) {
+                            val fileId = file.nameWithoutExtension.toLongOrNull()
+                            if (fileId == null || fileId !in validFileIds) {
+                                cleanedThumbnailsSize += file.length()
+                                file.delete()
+                                cleanedThumbnails++
+                            }
+                        }
+                    }
+                }
+
+                Result.success(OrphanedFilesInfo(
+                    cleanedEncryptedFiles = cleanedEncrypted,
+                    cleanedEncryptedSize = cleanedEncryptedSize,
+                    cleanedThumbnails = cleanedThumbnails,
+                    cleanedThumbnailsSize = cleanedThumbnailsSize
+                ))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
     companion object {
         private const val ENCRYPTED_DIR = "encrypted_files"
         private const val TEMP_DIR = "temp"
     }
 }
+
+data class OrphanedFilesInfo(
+    val cleanedEncryptedFiles: Int,
+    val cleanedEncryptedSize: Long,
+    val cleanedThumbnails: Int,
+    val cleanedThumbnailsSize: Long
+)

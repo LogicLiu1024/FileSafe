@@ -56,13 +56,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.logicliu.filesafe.data.FileDataStore
 import cn.logicliu.filesafe.data.FileSafeDatabase
+import cn.logicliu.filesafe.data.repository.FileRepository
+import cn.logicliu.filesafe.data.repository.OrphanedFilesInfo
 import cn.logicliu.filesafe.security.CryptoManager
 import cn.logicliu.filesafe.security.PasswordManager
+import cn.logicliu.filesafe.service.ThumbnailManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -85,7 +90,9 @@ class BackupViewModel(
     private val context: Context,
     private val database: FileSafeDatabase,
     private val cryptoManager: CryptoManager,
-    private val passwordManager: PasswordManager
+    private val passwordManager: PasswordManager,
+    private val fileDataStore: FileDataStore,
+    private val fileRepository: FileRepository
 ) : ViewModel() {
 
     private val _backupState = MutableStateFlow(BackupState())
@@ -98,9 +105,13 @@ class BackupViewModel(
 
     fun createBackup(password: String?, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
-            _backupState.value = BackupState(isLoading = true, progress = 0f, status = "正在准备备份...")
+            _backupState.value = BackupState(isLoading = true, progress = 0f, status = "正在清理孤立文件...")
 
             try {
+                fileRepository.cleanOrphanedFiles()
+
+                _backupState.value = _backupState.value.copy(progress = 0.02f, status = "正在准备备份...")
+
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                 val backupFileName = "FileSafe_Backup_$timestamp"
                 val encryptedFileName = if (password != null) "${backupFileName}.aes" else "${backupFileName}.zip"
@@ -275,18 +286,30 @@ class BackupViewModel(
         }
     }
 
-    private fun addEncryptedFiles(allFiles: MutableList<File>, filesDir: File) {
+    private suspend fun addEncryptedFiles(allFiles: MutableList<File>, filesDir: File) {
         val encryptedDir = File(filesDir, "encrypted_files")
-        if (encryptedDir.exists()) {
-            addFilesRecursively(encryptedDir, allFiles)
+        if (!encryptedDir.exists()) return
+
+        val validFiles = fileDataStore.files.first()
+        val validEncryptedPaths = validFiles.map { it.encryptedPath }.toSet()
+
+        encryptedDir.walkTopDown().forEach { file ->
+            if (file.isFile && file.absolutePath in validEncryptedPaths) {
+                allFiles.add(file)
+            }
         }
     }
 
-    private fun addThumbnailFiles(allFiles: MutableList<File>, filesDir: File) {
-        val thumbnailDir = File(filesDir, "thumbnails")
-        if (thumbnailDir.exists()) {
-            thumbnailDir.listFiles()?.forEach { file ->
-                if (file.isFile) {
+    private suspend fun addThumbnailFiles(allFiles: MutableList<File>, filesDir: File) {
+        val thumbnailDir = File(filesDir, ThumbnailManager.THUMBNAIL_DIR)
+        if (!thumbnailDir.exists()) return
+
+        val validFileIds = fileDataStore.files.first().map { it.id }.toSet()
+
+        thumbnailDir.listFiles()?.forEach { file ->
+            if (file.isFile) {
+                val fileId = file.nameWithoutExtension.toLongOrNull()
+                if (fileId != null && fileId in validFileIds) {
                     allFiles.add(file)
                 }
             }
@@ -378,10 +401,15 @@ fun BackupScreen(
     context: Context = LocalContext.current,
     database: FileSafeDatabase = remember { FileSafeDatabase.getInstance(context) },
     cryptoManager: CryptoManager = remember { CryptoManager(context) },
-    passwordManager: PasswordManager = remember { PasswordManager(context, cryptoManager) }
+    passwordManager: PasswordManager = remember { PasswordManager(context, cryptoManager) },
+    fileDataStore: FileDataStore = remember { FileDataStore.getInstance(context) },
+    fileRepository: FileRepository = remember {
+        FileRepository(context, fileDataStore, cryptoManager,
+            cn.logicliu.filesafe.security.SecuritySettingsManager(context))
+    }
 ) {
     val viewModel = remember {
-        BackupViewModel(context, database, cryptoManager, passwordManager)
+        BackupViewModel(context, database, cryptoManager, passwordManager, fileDataStore, fileRepository)
     }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }

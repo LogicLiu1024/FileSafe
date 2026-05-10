@@ -14,7 +14,7 @@ import java.io.FileOutputStream
 
 object ThumbnailManager {
 
-    private const val THUMBNAIL_DIR = "thumbnails"
+    const val THUMBNAIL_DIR = "thumbnails"
     private const val THUMBNAIL_SIZE = 256
     private const val THUMBNAIL_QUALITY = 85
     private const val MAX_THUMBNAIL_FILE_SIZE = 100L * 1024 * 1024
