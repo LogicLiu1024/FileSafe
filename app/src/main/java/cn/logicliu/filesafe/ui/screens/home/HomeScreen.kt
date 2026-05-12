@@ -258,7 +258,7 @@ fun HomeScreen(
 
     if (selectedFileForView != null) {
         FileViewerScreen(
-            file = selectedFileForView!!,
+            fileInfo = selectedFileForView!!,
             onNavigateBack = { viewModel.clearSelectedFileForView() }
         )
         return

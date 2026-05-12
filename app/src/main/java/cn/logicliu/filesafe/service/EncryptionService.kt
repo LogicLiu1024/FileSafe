@@ -609,16 +609,18 @@ class EncryptionService : Service() {
 
                     ensureActive()
                 } else {
-                    encryptedFile.copyTo(decryptedFile, overwrite = true)
-                    
-                    ProgressManager.notifyProgress(
-                        FileOperationProgress(
-                            isRunning = true,
-                            progress = 1f,
-                            fileName = fileEntity.name,
-                            operation = FileTaskOperation.EXPORT
+                    copyFileWithProgress(encryptedFile, decryptedFile) { progress ->
+                        ProgressManager.notifyProgress(
+                            FileOperationProgress(
+                                isRunning = true,
+                                progress = progress,
+                                fileName = fileEntity.name,
+                                operation = FileTaskOperation.EXPORT
+                            )
                         )
-                    )
+                        updateNotification("正在导出: ${fileEntity.name}", progress)
+                    }
+                    
                     updateNotification("导出完成: ${fileEntity.name}", 1f)
                 }
 
@@ -702,6 +704,40 @@ class EncryptionService : Service() {
                     progressCallback(1f)
                 }
             }
+        }
+    }
+
+    private suspend fun copyFileWithProgress(
+        sourceFile: File,
+        targetFile: File,
+        progressCallback: (Float) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val totalSize = sourceFile.length()
+        var bytesCopied = 0L
+        var lastProgressUpdate = 0L
+
+        java.io.BufferedInputStream(sourceFile.inputStream(), BUFFER_SIZE).use { input ->
+            java.io.BufferedOutputStream(targetFile.outputStream(), BUFFER_SIZE).use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    ensureActive()
+                    output.write(buffer, 0, bytesRead)
+                    bytesCopied += bytesRead
+
+                    if (totalSize > 0) {
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
+                            progressCallback(bytesCopied.toFloat() / totalSize)
+                            lastProgressUpdate = currentTime
+                        }
+                    }
+                }
+            }
+        }
+
+        if (totalSize > 0 && bytesCopied >= totalSize) {
+            progressCallback(1f)
         }
     }
 }

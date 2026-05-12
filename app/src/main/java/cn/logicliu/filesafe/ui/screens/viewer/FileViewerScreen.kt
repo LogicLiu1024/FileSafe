@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import cn.logicliu.filesafe.data.repository.DecryptedFileInfo
 import cn.logicliu.filesafe.ui.screens.player.VideoPlayerScreen
 import cn.logicliu.filesafe.ui.screens.player.isVideoFile
 import java.io.File
@@ -30,11 +31,12 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileViewerScreen(
-    file: File,
+    fileInfo: DecryptedFileInfo,
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val fileName = file.name
+    val file = fileInfo.file
+    val fileName = fileInfo.originalName
 
     BackHandler(onBack = onNavigateBack)
 
@@ -77,7 +79,7 @@ fun FileViewerScreen(
                 ) {
                     Text("无法直接预览此文件类型，请使用系统应用打开")
                     androidx.compose.material3.Button(
-                        onClick = { openFileWithSystemApp(context, file) },
+                        onClick = { openFileWithSystemApp(context, file, fileInfo.mimeType) },
                         modifier = Modifier.padding(top = 16.dp)
                     ) {
                         Text("打开")
@@ -93,10 +95,10 @@ private fun isImageFile(fileName: String): Boolean {
     return extension in listOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
 }
 
-private fun openFileWithSystemApp(context: Context, file: File) {
+private fun openFileWithSystemApp(context: Context, file: File, mimeType: String? = null) {
     val uri = Uri.fromFile(file)
     val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, getMimeType(file.name))
+        setDataAndType(uri, mimeType ?: getMimeType(file.name))
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }

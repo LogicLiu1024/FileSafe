@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import cn.logicliu.filesafe.data.repository.DecryptedFileInfo
 import java.io.File
 import java.util.UUID
 
@@ -354,8 +355,8 @@ class FileViewModel(
         }
     }
 
-    private val _selectedFileForView = MutableStateFlow<File?>(null)
-    val selectedFileForView: StateFlow<File?> = _selectedFileForView.asStateFlow()
+    private val _selectedFileForView = MutableStateFlow<DecryptedFileInfo?>(null)
+    val selectedFileForView: StateFlow<DecryptedFileInfo?> = _selectedFileForView.asStateFlow()
 
     data class MediaViewerInfo(
         val entities: List<FileItemEntity>,
@@ -384,8 +385,8 @@ class FileViewModel(
 
             val result = fileRepository.getDecryptedFile(fileId)
             result.fold(
-                onSuccess = { file ->
-                    _selectedFileForView.value = file
+                onSuccess = { fileInfo ->
+                    _selectedFileForView.value = fileInfo
                 },
                 onFailure = { e ->
                     _error.value = "打开文件失败: ${e.message}"
@@ -395,7 +396,7 @@ class FileViewModel(
         }
     }
 
-    suspend fun getDecryptedFileForViewing(fileId: Long): Result<File> {
+    suspend fun getDecryptedFileForViewing(fileId: Long): Result<DecryptedFileInfo> {
         return fileRepository.getDecryptedFile(fileId)
     }
 

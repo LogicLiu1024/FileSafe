@@ -154,7 +154,7 @@ class FileRepository(
         }
     }
 
-    suspend fun getDecryptedFile(fileId: Long): Result<File> {
+    suspend fun getDecryptedFile(fileId: Long): Result<DecryptedFileInfo> {
         return withContext(Dispatchers.IO) {
             try {
                 val fileEntity = fileDataStore.getFileById(fileId).first()
@@ -165,19 +165,17 @@ class FileRepository(
                     return@withContext Result.failure(Exception("Encrypted file not found"))
                 }
 
-                val decryptedFile = File(tempDir, fileEntity.name)
-                
                 if (fileEntity.isEncrypted) {
+                    val decryptedFile = File(tempDir, fileEntity.name)
                     val decryptSuccess = cryptoManager.decryptFile(encryptedFile, decryptedFile)
 
                     if (!decryptSuccess) {
                         return@withContext Result.failure(Exception("Decryption failed"))
                     }
+                    Result.success(DecryptedFileInfo(decryptedFile, fileEntity.name, fileEntity.mimeType))
                 } else {
-                    encryptedFile.copyTo(decryptedFile, overwrite = true)
+                    Result.success(DecryptedFileInfo(encryptedFile, fileEntity.name, fileEntity.mimeType))
                 }
-
-                Result.success(decryptedFile)
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -684,4 +682,10 @@ data class OrphanedFilesInfo(
     val cleanedEncryptedSize: Long,
     val cleanedThumbnails: Int,
     val cleanedThumbnailsSize: Long
+)
+
+data class DecryptedFileInfo(
+    val file: File,
+    val originalName: String,
+    val mimeType: String?
 )

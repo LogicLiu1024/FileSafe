@@ -73,6 +73,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import cn.logicliu.filesafe.data.entity.FileItemEntity
+import cn.logicliu.filesafe.data.repository.DecryptedFileInfo
 import cn.logicliu.filesafe.ui.screens.player.isVideoFile
 import coil.compose.rememberAsyncImagePainter
 import java.io.File
@@ -87,10 +88,10 @@ fun MediaViewerScreen(
     mediaFileEntities: List<FileItemEntity>,
     initialIndex: Int,
     onNavigateBack: () -> Unit,
-    onDecryptFile: suspend (Long) -> Result<File>
+    onDecryptFile: suspend (Long) -> Result<DecryptedFileInfo>
 ) {
     val pagerState = rememberPagerState(initialPage = initialIndex) { mediaFileEntities.size }
-    var decryptedFiles by remember { mutableStateOf<Map<Long, File>>(emptyMap()) }
+    var decryptedFiles by remember { mutableStateOf<Map<Long, DecryptedFileInfo>>(emptyMap()) }
     var isAnyPageZoomed by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onNavigateBack)
@@ -105,8 +106,8 @@ fun MediaViewerScreen(
             if (decryptedFiles.containsKey(entity.id)) continue
 
             val result = onDecryptFile(entity.id)
-            result.onSuccess { file ->
-                decryptedFiles = decryptedFiles + (entity.id to file)
+            result.onSuccess { fileInfo ->
+                decryptedFiles = decryptedFiles + (entity.id to fileInfo)
             }
         }
     }
@@ -127,15 +128,15 @@ fun MediaViewerScreen(
             if (decryptedFile != null) {
                 if (isVideoFile(entity.name)) {
                     VideoPage(
-                        videoFile = decryptedFile,
-                        videoName = entity.name,
+                        videoFile = decryptedFile.file,
+                        videoName = decryptedFile.originalName,
                         onNavigateBack = onNavigateBack,
                         onZoomChanged = { zoomed -> isAnyPageZoomed = zoomed }
                     )
                 } else {
                     ImagePage(
-                        imageFile = decryptedFile,
-                        imageName = entity.name,
+                        imageFile = decryptedFile.file,
+                        imageName = decryptedFile.originalName,
                         onNavigateBack = onNavigateBack,
                         onZoomChanged = { zoomed -> isAnyPageZoomed = zoomed }
                     )
