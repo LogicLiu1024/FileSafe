@@ -399,6 +399,7 @@ private fun EncryptionModeDialog(
                 
                 EncryptionAlgorithmOption(
                     algorithm = EncryptionAlgorithmType.AES_256_GCM,
+                    selectedMode = selectedMode,
                     selectedAlgorithm = selectedAlgorithm,
                     label = "AES-256-GCM",
                     description = "标准加密算法，兼容性最好",
@@ -411,6 +412,7 @@ private fun EncryptionModeDialog(
                 
                 EncryptionAlgorithmOption(
                     algorithm = EncryptionAlgorithmType.XCHACHA20_POLY1305,
+                    selectedMode = selectedMode,
                     selectedAlgorithm = selectedAlgorithm,
                     label = "XChaCha20-Poly1305",
                     description = "高性能加密算法，适合大文件",
@@ -433,6 +435,7 @@ private fun EncryptionModeDialog(
 @Composable
 private fun EncryptionAlgorithmOption(
     algorithm: EncryptionAlgorithmType,
+    selectedMode: EncryptionMode,
     selectedAlgorithm: EncryptionAlgorithmType,
     label: String,
     description: String,
@@ -446,7 +449,7 @@ private fun EncryptionAlgorithmOption(
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(
-            selected = selectedAlgorithm == algorithm,
+            selected = selectedMode == EncryptionMode.ENCRYPT && selectedAlgorithm == algorithm,
             onClick = onClick
         )
         Spacer(modifier = Modifier.width(8.dp))
