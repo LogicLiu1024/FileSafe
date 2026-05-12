@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SnippetFolder
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.outlined.FolderOff
@@ -304,7 +305,7 @@ fun HomeScreen(
                     }
                 )
                 NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                     label = { Text("设置") },
                     selected = false,
                     onClick = {
