@@ -428,6 +428,7 @@ fun BackupScreen(
     var restorePassword by remember { mutableStateOf("") }
     var showRestoreConfirmDialog by remember { mutableStateOf(false) }
     var pendingRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var showFeatureDevDialog by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -549,25 +550,7 @@ fun BackupScreen(
                         )
                     } else {
                         Button(
-                            onClick = {
-                                if (usePassword) {
-                                    showPasswordDialog = true
-                                } else {
-                                    viewModel.createBackup(
-                                        password = null,
-                                        onSuccess = { fileName ->
-                                            scope.launch {
-                                                snackbarHostState.showSnackbar("备份已保存: $fileName")
-                                            }
-                                        },
-                                        onError = { error ->
-                                            scope.launch {
-                                                snackbarHostState.showSnackbar("备份失败: $error")
-                                            }
-                                        }
-                                    )
-                                }
-                            },
+                            onClick = { showFeatureDevDialog = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.FolderZip, contentDescription = null)
@@ -659,9 +642,7 @@ fun BackupScreen(
                         )
                     } else {
                         OutlinedButton(
-                            onClick = {
-                                filePickerLauncher.launch(arrayOf("*/*"))
-                            },
+                            onClick = { showFeatureDevDialog = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.FolderZip, contentDescription = null)
@@ -815,6 +796,21 @@ fun BackupScreen(
                     pendingRestoreUri = null
                 }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showFeatureDevDialog) {
+        AlertDialog(
+            onDismissRequest = { showFeatureDevDialog = false },
+            title = { Text("功能开发中") },
+            text = {
+                Text("备份与恢复功能正在开发中，敬请期待后续版本更新。")
+            },
+            confirmButton = {
+                TextButton(onClick = { showFeatureDevDialog = false }) {
+                    Text("知道了")
                 }
             }
         )
