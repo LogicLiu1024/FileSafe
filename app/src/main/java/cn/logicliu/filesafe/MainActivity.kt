@@ -38,6 +38,9 @@ class MainActivity : FragmentActivity() {
     // 最后活动时间
     private var lastActiveTime: Long = System.currentTimeMillis()
     
+    // 上次暂停时间，用于判断是否是短暂的外部Activity返回
+    private var lastPauseTime: Long = 0L
+    
     // 屏幕关闭广播接收器
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -52,6 +55,10 @@ class MainActivity : FragmentActivity() {
 
     // 广播接收器是否已注册
     private var isReceiverRegistered = false
+    
+    companion object {
+        private const val EXTERNAL_ACTIVITY_THRESHOLD = 30 * 1000L
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,7 +135,12 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onPause(owner: LifecycleOwner) {
-                lastActiveTime = System.currentTimeMillis()
+                // 记录暂停时间
+                lastPauseTime = System.currentTimeMillis()
+                // 如果用户已解锁，更新最后活动时间
+                if (authViewModel.isUnlocked.value) {
+                    lastActiveTime = System.currentTimeMillis()
+                }
             }
         })
     }
@@ -169,6 +181,13 @@ class MainActivity : FragmentActivity() {
         if (autoLockMillis == -1L) {
             return
         }
+        
+        // 如果是短暂的外部Activity返回（如文件选择器），跳过自动锁定检查
+        val timeSincePause = System.currentTimeMillis() - lastPauseTime
+        if (lastPauseTime > 0 && timeSincePause < EXTERNAL_ACTIVITY_THRESHOLD) {
+            return
+        }
+        
         if (autoLockMillis > 0) {
             val timeSinceLastActive = System.currentTimeMillis() - lastActiveTime
             if (timeSinceLastActive >= autoLockMillis) {
@@ -177,5 +196,10 @@ class MainActivity : FragmentActivity() {
         } else if (authViewModel.isUnlocked.value) {
             authViewModel.lockApp()
         }
+    }
+    
+    // 更新最后活动时间（供外部调用）
+    fun updateLastActiveTime() {
+        lastActiveTime = System.currentTimeMillis()
     }
 }
