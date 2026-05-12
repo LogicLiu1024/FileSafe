@@ -18,9 +18,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
@@ -109,6 +113,9 @@ fun FolderScreen(
     val fileRepository = remember { FileRepository(context, fileDataStore, cryptoManager, securitySettingsManager) }
     val viewModel = remember { FileViewModel(fileRepository, context) }
     val snackbarHostState = remember { SnackbarHostState() }
+    
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
 
     val currentFolderId by viewModel.currentFolderId.collectAsState()
     val currentFolderName by viewModel.currentFolderName.collectAsState()
@@ -436,6 +443,7 @@ fun FolderScreen(
             } else {
                 if (viewMode == ViewMode.LIST) {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -495,6 +503,7 @@ fun FolderScreen(
                     }
                 } else {
                     LazyVerticalGrid(
+                        state = gridState,
                         columns = GridCells.Fixed(3),
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
